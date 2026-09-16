@@ -1,69 +1,139 @@
 @import "tailwindcss";
 
-@theme {
-  --color-surface: #111319;
-  --color-surface-dim: #111319;
-  --color-surface-bright: #36393f;
-  --color-surface-container-lowest: #0b0e13;
-  --color-surface-container-low: #191c21;
-  --color-surface-container: #1d2025;
-  --color-surface-container-high: #272a30;
-  --color-surface-container-highest: #32353b;
-  --color-on-surface: #e1e2ea;
-  --color-on-surface-variant: #e3beb6;
-  --color-inverse-surface: #e1e2ea;
-  --color-inverse-on-surface: #2e3036;
-  --color-outline: #aa8982;
-  --color-outline-variant: #5b413a;
-  --color-surface-tint: #ffb4a3;
-  --color-primary: #ffb4a3;
-  --color-on-primary: #621100;
-  --color-primary-container: #ff5c35;
-  --color-on-primary-container: #5a0e00;
-  --color-inverse-primary: #b52701;
-  --color-secondary: #4cd7f6;
-  --color-on-secondary: #003640;
-  --color-secondary-container: #03b5d3;
-  --color-on-secondary-container: #00424e;
-  --color-tertiary: #4edea3;
-  --color-on-tertiary: #003824;
-  --color-tertiary-container: #00a874;
-  --color-on-tertiary-container: #003421;
-  --color-error: #ffb4ab;
-  --color-on-error: #690005;
-  --color-error-container: #93000a;
-  --color-on-error-container: #ffdad6;
+@custom-variant dark (&:where(.dark, .dark *));
 
-  --font-headline: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-body: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-code: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+/*
+ * 9Router design tokens
+ * Ported from decolua/9router `src/app/globals.css`:
+ * warm paper light theme + charcoal dark theme, terracotta brand (#E56A4A),
+ * frosted sidebar, 10/14px brand radii, soft/warm/elevated shadows.
+ */
+
+@theme inline {
+  /* Brand scale (terracotta) */
+  --color-brand-50: #fdf1ed;
+  --color-brand-100: #fadccf;
+  --color-brand-200: #f4b59c;
+  --color-brand-300: #ee8d6a;
+  --color-brand-400: #ea7855;
+  --color-brand-500: #e56a4a;
+  --color-brand-600: #cc5236;
+  --color-brand-700: #a64027;
+  --color-brand-800: #7a2f1d;
+  --color-brand-900: #4d1e12;
+
+  /* Semantic surfaces */
+  --color-bg: var(--app-bg);
+  --color-bg-alt: var(--app-bg-alt);
+  --color-surface: var(--app-surface);
+  --color-surface-2: var(--app-surface-2);
+  --color-surface-3: var(--app-surface-3);
+  --color-sidebar: var(--app-sidebar);
+
+  /* Borders */
+  --color-border: var(--app-border);
+  --color-border-subtle: var(--app-border-subtle);
+
+  /* Text */
+  --color-text-main: var(--app-text-main);
+  --color-text-muted: var(--app-text-muted);
+  --color-text-subtle: var(--app-text-subtle);
+
+  /* Status */
+  --color-danger: #cf222e;
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-info: #3b82f6;
+
+  /* Radii */
+  --radius-brand: 10px;
+  --radius-brand-lg: 14px;
+
+  /* Shadows */
+  --shadow-soft: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
+  --shadow-warm: 0 2px 12px -2px rgba(229, 106, 74, 0.18);
+  --shadow-elevated: 0 12px 28px -4px rgba(60, 50, 45, 0.06);
+
+  /* Fonts */
+  --font-headline: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Display",
+    system-ui, sans-serif;
+  --font-body: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    system-ui, sans-serif;
+  --font-code: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+/* Light theme (default) */
 :root {
+  color-scheme: light;
+  --app-bg: #fdfaf6;
+  --app-bg-alt: #f7f3ee;
+  --app-surface: #ffffff;
+  --app-surface-2: #f4f4f5;
+  --app-surface-3: #e7e7e9;
+  --app-sidebar: rgba(244, 241, 236, 0.85);
+  --app-border: #e5e7eb;
+  --app-border-subtle: #f1f1f3;
+  --app-text-main: #0a0a0a;
+  --app-text-muted: #6b7280;
+  --app-text-subtle: #9ca3af;
+}
+
+/* Dark theme */
+.dark {
   color-scheme: dark;
+  --app-bg: #1a1a1a;
+  --app-bg-alt: #1f1f1e;
+  --app-surface: #262626;
+  --app-surface-2: #303030;
+  --app-surface-3: #3a3a3a;
+  --app-sidebar: rgba(30, 30, 30, 0.85);
+  --app-border: #333333;
+  --app-border-subtle: #2a2a2a;
+  --app-text-main: #ededed;
+  --app-text-muted: #9ca3af;
+  --app-text-subtle: #6b7280;
 }
 
 body {
   margin: 0;
   min-height: 100vh;
-  background-color: #0b0e13;
-  color: #e1e2ea;
+  background-color: var(--app-bg);
+  color: var(--app-text-main);
   font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Custom technical scrollbars */
-::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+/* Upstream landing grid background */
+.landing-grid {
+  background-image: linear-gradient(
+      to right,
+      var(--color-brand-500) 1px,
+      transparent 1px
+    ),
+    linear-gradient(to bottom, var(--color-brand-500) 1px, transparent 1px);
+  background-size: 40px 40px;
+  opacity: 0.08;
 }
-::-webkit-scrollbar-track {
+.dark .landing-grid {
+  opacity: 0.04;
+}
+
+/* Custom scrollbar (kept from upstream custom-scrollbar utility) */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
   background: transparent;
 }
-::-webkit-scrollbar-thumb {
-  background: #272a30;
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--app-surface-3);
   border-radius: 9999px;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: #32353b;
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--app-text-subtle);
+}
+
+::selection {
+  background: rgba(229, 106, 74, 0.18);
 }

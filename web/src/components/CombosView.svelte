@@ -228,40 +228,40 @@
 </script>
 
 <div class="space-y-6">
-  <!-- Header Section & Operational Status (Stitch Screenshot) -->
+  <!-- Page header -->
   <div class="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
     <div class="space-y-1.5 max-w-2xl">
       <div class="flex items-center gap-2">
-        <span class="font-code text-[10px] uppercase tracking-wider text-[#ff5c35] px-2 py-0.5 rounded bg-[#ff5c35]/10 border border-[#ff5c35]/25 font-bold">
+        <span class="font-code text-[10px] uppercase tracking-wider text-brand-500 px-2 py-0.5 rounded bg-brand-500/10 border border-brand-500/25 font-bold">
           Virtualization Layer
         </span>
-        <span class="text-[#636c7e]">•</span>
-        <span class="font-code text-[11px] text-[#636c7e]">Cluster 9Router-East</span>
+        <span class="text-text-subtle">•</span>
+        <span class="font-code text-[11px] text-text-subtle">Cluster 9Router-East</span>
       </div>
-      <h1 class="font-headline text-2xl sm:text-3xl font-bold text-[#e1e2ea] tracking-tight">
+      <h1 class="font-headline text-2xl sm:text-3xl font-bold text-text-main tracking-tight">
         Model Combos & Intelligent Routing
       </h1>
-      <p class="font-body text-xs sm:text-sm text-[#8e95a5] leading-relaxed">
+      <p class="font-body text-xs sm:text-sm text-text-muted leading-relaxed">
         Group multiple LLMs under unified virtual endpoints with automated failover, load balancing, or consensus fusion across multi-cloud credentials.
       </p>
     </div>
 
     <!-- Quick Metrics Summary Pills -->
     <div class="flex flex-wrap items-center gap-2">
-      <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#131722] border border-[#232a3b] font-code text-xs">
-        <span class="text-[#8e95a5]">Active Endpoints:</span>
-        <span class="text-[#4edea3] font-bold">{combos.length} Online</span>
+      <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface border border-border font-code text-xs">
+        <span class="text-text-muted">Active Endpoints:</span>
+        <span class="text-success font-bold">{combos.length} Online</span>
       </div>
 
-      <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#131722] border border-[#232a3b] font-code text-xs">
-        <span class="text-[#8e95a5]">Failover Speed:</span>
-        <span class="text-[#4cd7f6] font-bold">&lt;48ms</span>
+      <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface border border-border font-code text-xs">
+        <span class="text-text-muted">Failover Speed:</span>
+        <span class="text-info font-bold">&lt;48ms</span>
       </div>
 
       <button
         type="button"
         onclick={() => (isCreatingOpen = true)}
-        class="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#ff5c35] hover:brightness-110 text-white font-body text-xs font-bold shadow-md shadow-[#ff5c35]/25 transition cursor-pointer"
+        class="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 text-white font-body text-xs font-bold shadow-md shadow-brand-500/25 transition cursor-pointer"
       >
         <Plus class="w-4 h-4" />
         <span>Create New Combo</span>
@@ -272,90 +272,90 @@
   <!-- Strategy Blueprint Cards (Stitch Design) -->
   <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
     <!-- Fallback Chain -->
-    <div class="p-4 rounded-xl bg-[#131722] border border-[#232a3b] space-y-2">
+    <div class="p-4 rounded-xl bg-surface border border-border space-y-2">
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2">
-          <div class="p-1.5 rounded-lg bg-[#ff5c35]/15 text-[#ff5c35]">
+          <div class="p-1.5 rounded-lg bg-brand-500/15 text-brand-500">
             <GitBranch class="w-4 h-4" />
           </div>
-          <span class="font-headline text-xs font-bold text-white">Fallback Chain</span>
+          <span class="font-headline text-xs font-bold text-text-main">Fallback Chain</span>
         </div>
-        <span class="font-code text-[10px] text-[#ff5c35] bg-[#ff5c35]/10 px-2 py-0.5 rounded-full border border-[#ff5c35]/20 font-semibold">
+        <span class="font-code text-[10px] text-brand-500 bg-brand-500/10 px-2 py-0.5 rounded-full border border-brand-500/20 font-semibold">
           Default
         </span>
       </div>
-      <p class="font-body text-[11px] text-[#8e95a5] leading-relaxed">
+      <p class="font-body text-[11px] text-text-muted leading-relaxed">
         Queries models sequentially. If primary model returns 429, 5xx, or timeouts, seamlessly switches downstream without socket drops.
       </p>
-      <div class="font-code text-[10px] text-[#636c7e] flex items-center gap-1.5 pt-1">
-        <span class="w-1.5 h-1.5 rounded-full bg-[#ff5c35]"></span>
+      <div class="font-code text-[10px] text-text-subtle flex items-center gap-1.5 pt-1">
+        <span class="w-1.5 h-1.5 rounded-full bg-brand-500"></span>
         <span>Policy: Next-on-failure</span>
       </div>
     </div>
 
     <!-- Round Robin -->
-    <div class="p-4 rounded-xl bg-[#131722] border border-[#232a3b] space-y-2">
+    <div class="p-4 rounded-xl bg-surface border border-border space-y-2">
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2">
-          <div class="p-1.5 rounded-lg bg-[#4cd7f6]/15 text-[#4cd7f6]">
+          <div class="p-1.5 rounded-lg bg-info/15 text-info">
             <RefreshCw class="w-4 h-4" />
           </div>
-          <span class="font-headline text-xs font-bold text-white">Round Robin</span>
+          <span class="font-headline text-xs font-bold text-text-main">Round Robin</span>
         </div>
-        <span class="font-code text-[10px] text-[#4cd7f6] bg-[#4cd7f6]/10 px-2 py-0.5 rounded-full border border-[#4cd7f6]/20 font-semibold">
+        <span class="font-code text-[10px] text-info bg-info/10 px-2 py-0.5 rounded-full border border-info/20 font-semibold">
           Load Spread
         </span>
       </div>
-      <p class="font-body text-[11px] text-[#8e95a5] leading-relaxed">
+      <p class="font-body text-[11px] text-text-muted leading-relaxed">
         Rotates requests across candidate keys and regional instances to maximize TPM quotas and minimize rate-limit throttling.
       </p>
-      <div class="font-code text-[10px] text-[#636c7e] flex items-center gap-1.5 pt-1">
-        <span class="w-1.5 h-1.5 rounded-full bg-[#4cd7f6]"></span>
+      <div class="font-code text-[10px] text-text-subtle flex items-center gap-1.5 pt-1">
+        <span class="w-1.5 h-1.5 rounded-full bg-info"></span>
         <span>Policy: Weighted distribution</span>
       </div>
     </div>
 
     <!-- Consensus Fusion -->
-    <div class="p-4 rounded-xl bg-[#131722] border border-[#232a3b] space-y-2">
+    <div class="p-4 rounded-xl bg-surface border border-border space-y-2">
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2">
-          <div class="p-1.5 rounded-lg bg-[#4edea3]/15 text-[#4edea3]">
+          <div class="p-1.5 rounded-lg bg-success/15 text-success">
             <Zap class="w-4 h-4" />
           </div>
-          <span class="font-headline text-xs font-bold text-white">Consensus Fusion</span>
+          <span class="font-headline text-xs font-bold text-text-main">Consensus Fusion</span>
         </div>
-        <span class="font-code text-[10px] text-[#4edea3] bg-[#4edea3]/10 px-2 py-0.5 rounded-full border border-[#4edea3]/20 font-semibold">
+        <span class="font-code text-[10px] text-success bg-success/10 px-2 py-0.5 rounded-full border border-success/20 font-semibold">
           Max Quality
         </span>
       </div>
-      <p class="font-body text-[11px] text-[#8e95a5] leading-relaxed">
+      <p class="font-body text-[11px] text-text-muted leading-relaxed">
         Queries parallel LLM nodes simultaneously, using fast-evaluator judge to select or synthesize the most coherent response.
       </p>
-      <div class="font-code text-[10px] text-[#636c7e] flex items-center gap-1.5 pt-1">
-        <span class="w-1.5 h-1.5 rounded-full bg-[#4edea3]"></span>
+      <div class="font-code text-[10px] text-text-subtle flex items-center gap-1.5 pt-1">
+        <span class="w-1.5 h-1.5 rounded-full bg-success"></span>
         <span>Policy: Parallel Judge (N+1)</span>
       </div>
     </div>
   </div>
 
   <!-- Filter & Realtime Query Toolbar (Stitch Screenshot) -->
-  <div class="flex flex-col sm:flex-row items-center justify-between gap-3 p-2 rounded-xl bg-[#131722] border border-[#232a3b]">
+  <div class="flex flex-col sm:flex-row items-center justify-between gap-3 p-2 rounded-xl bg-surface border border-border">
     <div class="relative w-full sm:w-80 flex items-center">
-      <Search class="absolute left-3 w-4 h-4 text-[#636c7e] pointer-events-none" />
+      <Search class="absolute left-3 w-4 h-4 text-text-subtle pointer-events-none" />
       <input
         type="text"
         bind:value={searchFilter}
         placeholder="Filter combos by alias, tag, or backing provider..."
-        class="w-full bg-[#0d1017] border border-[#232a3b] rounded-lg pl-9 pr-3 py-1.5 font-body text-xs text-[#e1e2ea] placeholder:text-[#636c7e] focus:outline-none focus:border-[#ff5c35] transition"
+        class="w-full bg-surface-2 border border-border rounded-lg pl-9 pr-3 py-1.5 font-body text-xs text-text-main placeholder:text-text-subtle focus:outline-none focus:border-brand-500 transition"
       />
     </div>
 
     <div class="flex items-center gap-2">
-      <div class="flex items-center gap-1.5 text-xs font-code text-[#8e95a5]">
+      <div class="flex items-center gap-1.5 text-xs font-code text-text-muted">
         <span>Strategy:</span>
         <select
           bind:value={strategyFilter}
-          class="bg-[#0d1017] border border-[#232a3b] rounded px-2.5 py-1 text-xs text-white focus:outline-none"
+          class="bg-surface-2 border border-border rounded px-2.5 py-1 text-xs text-text-main focus:outline-none"
         >
           <option value="ALL">All Strategies ({combos.length})</option>
           <option value="fallback">Fallback Only</option>
@@ -380,27 +380,27 @@
 
       <div
         class="rounded-xl border transition-all overflow-hidden {isSelected
-          ? 'bg-[#181d27] border-[#ff5c35]/50 shadow-lg shadow-[#ff5c35]/10'
-          : 'bg-[#131722] border-[#232a3b] hover:border-[#333d54]'}"
+          ? 'bg-surface-2 border-brand-500/50 shadow-lg shadow-brand-500/10'
+          : 'bg-surface border-border hover:border-border'}"
       >
         <!-- Combo Row Header -->
         <div class="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div class="flex items-center gap-3">
-            <div class="w-8 h-8 rounded-lg bg-[#0b0e13] border border-[#232a3b] flex items-center justify-center text-[#ff5c35]">
+            <div class="w-8 h-8 rounded-lg bg-bg border border-border flex items-center justify-center text-brand-500">
               <Layers class="w-4 h-4" />
             </div>
 
             <div>
               <div class="flex items-center gap-2">
-                <span class="font-headline text-sm font-bold text-white">{c.name}</span>
-                <span class="font-code text-[10px] px-2 py-0.5 rounded bg-[#ff5c35]/15 text-[#ff8469] font-bold border border-[#ff5c35]/25">
+                <span class="font-headline text-sm font-bold text-text-main">{c.name}</span>
+                <span class="font-code text-[10px] px-2 py-0.5 rounded bg-brand-500/15 text-brand-400 font-bold border border-brand-500/25">
                   model: "{c.name}"
                 </span>
-                <span class="font-code text-[10px] text-[#4edea3] bg-[#4edea3]/10 px-2 py-0.5 rounded border border-[#4edea3]/20">
+                <span class="font-code text-[10px] text-success bg-success/10 px-2 py-0.5 rounded border border-success/20">
                   99.8% uptime
                 </span>
               </div>
-              <div class="text-[11px] text-[#8e95a5] font-code pt-0.5">
+              <div class="text-[11px] text-text-muted font-code pt-0.5">
                 0 failover drops • Virtual Gateway Endpoint
               </div>
             </div>
@@ -408,37 +408,37 @@
 
           <!-- Pipeline Flow Preview -->
           <div class="flex items-center gap-2 overflow-x-auto py-1">
-            <span class="font-code text-[10px] text-[#636c7e] uppercase font-bold">Pipeline:</span>
+            <span class="font-code text-[10px] text-text-subtle uppercase font-bold">Pipeline:</span>
             {#if parsedModels.length > 0}
               {#each parsedModels as m, idx}
                 <div class="flex items-center gap-1.5 font-code text-xs">
-                  <span class="px-2 py-0.5 rounded bg-[#0b0e13] border border-[#232a3b] text-[#e1e2ea]">
-                    <strong class="text-[#ff5c35]">{idx + 1}</strong> {m}
+                  <span class="px-2 py-0.5 rounded bg-bg border border-border text-text-main">
+                    <strong class="text-brand-500">{idx + 1}</strong> {m}
                   </span>
                   {#if idx < parsedModels.length - 1}
-                    <ArrowRight class="w-3 h-3 text-[#636c7e]" />
+                    <ArrowRight class="w-3 h-3 text-text-subtle" />
                   {/if}
                 </div>
               {/each}
             {:else}
-              <span class="text-xs text-[#636c7e] italic">No upstream models assigned yet</span>
+              <span class="text-xs text-text-subtle italic">No upstream models assigned yet</span>
             {/if}
           </div>
 
           <!-- Right Actions -->
           <div class="flex items-center gap-2 self-end md:self-auto">
-            <span class="font-code text-[10px] px-2 py-1 rounded bg-[#0b0e13] text-[#4cd7f6] border border-[#232a3b] capitalize">
+            <span class="font-code text-[10px] px-2 py-1 rounded bg-bg text-info border border-border capitalize">
               {c.strategy === 'round-robin' ? 'Round Robin - spread load' : 'Fallback - try in order'}
             </span>
 
             <button
               type="button"
               onclick={() => copyAlias(c.name)}
-              class="p-1.5 rounded-lg text-[#8e95a5] hover:text-white bg-[#0b0e13] border border-[#232a3b] cursor-pointer"
+              class="p-1.5 rounded-lg text-text-muted hover:text-text-main bg-bg border border-border cursor-pointer"
               title="Copy Model Name"
             >
               {#if copiedName === c.name}
-                <Check class="w-3.5 h-3.5 text-[#4edea3]" />
+                <Check class="w-3.5 h-3.5 text-success" />
               {:else}
                 <Copy class="w-3.5 h-3.5" />
               {/if}
@@ -448,8 +448,8 @@
               type="button"
               onclick={() => (selectedComboId = isSelected ? null : c.id)}
               class="px-3 py-1 rounded-lg text-xs font-semibold cursor-pointer transition {isSelected
-                ? 'bg-[#ff5c35] text-white'
-                : 'bg-[#272f42] hover:bg-[#333d54] text-[#e1e2ea]'}"
+                ? 'text-text-main'
+                : 'bg-surface-3 hover:bg-surface-3 text-text-main'}"
             >
               {isSelected ? 'Close Editor' : 'Edit Pipeline'}
             </button>
@@ -458,18 +458,18 @@
 
         <!-- Expanded Pipeline Editor & Live Test (If Selected) -->
         {#if isSelected}
-          <div class="p-5 border-t border-[#232a3b] bg-[#0d1017] space-y-5">
+          <div class="p-5 border-t border-border bg-surface-2 space-y-5">
             <!-- Pipeline Reorder Sequence -->
             <div class="space-y-3">
               <div class="flex items-center justify-between">
-                <div class="font-body text-xs font-semibold text-white">
+                <div class="font-body text-xs font-semibold text-text-main">
                   Model Priority Pipeline (Top-to-Bottom Execution)
                 </div>
                 <div class="flex items-center gap-2">
                   <button
                     type="button"
                     onclick={() => handleDeleteCombo(c.id)}
-                    class="text-xs text-rose-400 hover:underline cursor-pointer"
+                    class="text-xs text-hover:text-danger hover:underline cursor-pointer"
                   >
                     Delete Combo
                   </button>
@@ -477,7 +477,7 @@
                     type="button"
                     onclick={handleSaveCombo}
                     disabled={isSaving}
-                    class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#4edea3] hover:brightness-110 text-black font-bold text-xs shadow-md transition cursor-pointer"
+                    class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-success hover:brightness-110 text-black font-bold text-xs shadow-md transition cursor-pointer"
                   >
                     {#if isSaving}
                       <Loader2 class="w-3.5 h-3.5 animate-spin" />
@@ -491,12 +491,12 @@
 
               <div class="space-y-2">
                 {#each editingModels as model, idx}
-                  <div class="flex items-center justify-between p-3 rounded-lg bg-[#131722] border border-[#232a3b]">
+                  <div class="flex items-center justify-between p-3 rounded-lg bg-surface border border-border">
                     <div class="flex items-center gap-3">
-                      <span class="w-6 h-6 rounded bg-[#1c2230] text-white flex items-center justify-center font-bold text-xs font-code">
+                      <span class="w-6 h-6 rounded bg-surface-2 text-text-main flex items-center justify-center font-bold text-xs font-code">
                         {idx + 1}
                       </span>
-                      <span class="font-code text-xs text-white">{model}</span>
+                      <span class="font-code text-xs text-text-main">{model}</span>
                     </div>
 
                     <div class="flex items-center gap-1">
@@ -504,7 +504,7 @@
                         type="button"
                         onclick={() => handleMoveModel(idx, -1)}
                         disabled={idx === 0}
-                        class="p-1 rounded text-[#8e95a5] hover:text-white disabled:opacity-30 cursor-pointer"
+                        class="p-1 rounded text-text-muted hover:text-text-main disabled:opacity-30 cursor-pointer"
                         title="Move Up"
                       >
                         <ArrowUp class="w-3.5 h-3.5" />
@@ -513,7 +513,7 @@
                         type="button"
                         onclick={() => handleMoveModel(idx, 1)}
                         disabled={idx === editingModels.length - 1}
-                        class="p-1 rounded text-[#8e95a5] hover:text-white disabled:opacity-30 cursor-pointer"
+                        class="p-1 rounded text-text-muted hover:text-text-main disabled:opacity-30 cursor-pointer"
                         title="Move Down"
                       >
                         <ArrowDown class="w-3.5 h-3.5" />
@@ -521,7 +521,7 @@
                       <button
                         type="button"
                         onclick={() => handleRemoveModel(idx)}
-                        class="p-1 rounded text-[#8e95a5] hover:text-rose-400 ml-2 cursor-pointer"
+                        class="p-1 rounded text-text-muted hover:text-hover:text-danger ml-2 cursor-pointer"
                         title="Remove"
                       >
                         <Trash2 class="w-3.5 h-3.5" />
@@ -538,12 +538,12 @@
                   placeholder="Enter model string (e.g. fb/z-ai/glm-5.3-flash, ag/gemini-2.5-flash-high, deepseek-chat)"
                   bind:value={modelInput}
                   onkeydown={(e) => e.key === 'Enter' && handleAddModel()}
-                  class="flex-1 px-3 py-2 rounded-lg bg-[#131722] border border-[#232a3b] font-code text-xs text-white focus:outline-none focus:border-[#ff5c35]"
+                  class="flex-1 px-3 py-2 rounded-lg bg-surface border border-border font-code text-xs text-text-main focus:outline-none focus:border-brand-500"
                 />
                 <button
                   type="button"
                   onclick={handleAddModel}
-                  class="px-4 py-2 rounded-lg bg-[#272f42] hover:bg-[#333d54] text-white font-body text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                  class="px-4 py-2 rounded-lg bg-surface-3 hover:bg-surface-3 text-text-main font-body text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
                 >
                   <Plus class="w-3.5 h-3.5" />
                   <span>Add Upstream Model</span>
@@ -552,14 +552,14 @@
             </div>
 
             <!-- Live Test Playground (Stitch Style) -->
-            <div class="pt-4 border-t border-[#232a3b] space-y-3">
+            <div class="pt-4 border-t border-border space-y-3">
               <div class="flex items-center justify-between">
-                <div class="font-headline text-xs font-bold text-white flex items-center gap-2">
-                  <Play class="w-3.5 h-3.5 text-[#4edea3]" />
+                <div class="font-headline text-xs font-bold text-text-main flex items-center gap-2">
+                  <Play class="w-3.5 h-3.5 text-success" />
                   <span>Live Test Playground: Testing "{c.name}"</span>
                 </div>
                 {#if testLatency !== null}
-                  <span class="font-code text-[11px] text-[#4edea3]">RTT Latency: {testLatency}ms</span>
+                  <span class="font-code text-[11px] text-success">RTT Latency: {testLatency}ms</span>
                 {/if}
               </div>
 
@@ -568,13 +568,13 @@
                   type="text"
                   bind:value={testPrompt}
                   placeholder="Test prompt..."
-                  class="flex-1 px-3 py-2 rounded-lg bg-[#131722] border border-[#232a3b] font-body text-xs text-white focus:outline-none focus:border-[#ff5c35]"
+                  class="flex-1 px-3 py-2 rounded-lg bg-surface border border-border font-body text-xs text-text-main focus:outline-none focus:border-brand-500"
                 />
                 <button
                   type="button"
                   onclick={handleRunLiveTest}
                   disabled={isTesting}
-                  class="px-4 py-2 rounded-lg bg-[#ff5c35] hover:brightness-110 text-white font-body text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                  class="px-4 py-2 rounded-lg text-text-main font-body text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
                 >
                   {#if isTesting}
                     <Loader2 class="w-3.5 h-3.5 animate-spin" />
@@ -586,7 +586,7 @@
               </div>
 
               {#if testOutput}
-                <div class="p-3.5 rounded-lg bg-[#0b0e13] border border-[#232a3b] font-code text-xs text-[#4edea3] whitespace-pre-wrap max-h-48 overflow-y-auto">
+                <div class="p-3.5 rounded-lg bg-bg border border-border font-code text-xs text-success whitespace-pre-wrap max-h-48 overflow-y-auto">
                   {testOutput}
                 </div>
               {/if}
@@ -598,50 +598,50 @@
   </div>
 
   <!-- Modality Switch Adapters (From Stitch Screenshot) -->
-  <div class="p-5 rounded-xl bg-[#131722] border border-[#232a3b] space-y-3">
+  <div class="p-5 rounded-xl bg-surface border border-border space-y-3">
     <div class="space-y-0.5">
-      <h3 class="font-headline text-sm font-bold text-white flex items-center gap-2">
-        <Cpu class="w-4 h-4 text-[#4cd7f6]" />
+      <h3 class="font-headline text-sm font-bold text-text-main flex items-center gap-2">
+        <Cpu class="w-4 h-4 text-info" />
         <span>Modality Switch Adapters</span>
       </h3>
-      <p class="font-body text-xs text-[#8e95a5]">
+      <p class="font-body text-xs text-text-muted">
         If your request carries image, audio, or binary attachments and the designated model cannot parse them, 9Router will intelligently intercept and swap downstream models on the fly.
       </p>
     </div>
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
       <!-- Vision Adapter -->
-      <div class="p-3.5 rounded-lg bg-[#0d1017] border border-[#232a3b] flex items-center justify-between">
+      <div class="p-3.5 rounded-lg bg-surface-2 border border-border flex items-center justify-between">
         <div class="flex items-center gap-3">
-          <div class="p-2 rounded-lg bg-[#4cd7f6]/15 text-[#4cd7f6]">
+          <div class="p-2 rounded-lg bg-info/15 text-info">
             <Eye class="w-4 h-4" />
           </div>
           <div>
             <div class="flex items-center gap-2">
-              <span class="font-headline text-xs font-bold text-white">VisionAdapter</span>
-              <span class="font-code text-[9px] px-1.5 py-0.2 rounded bg-[#4edea3]/15 text-[#4edea3] font-semibold">Active</span>
+              <span class="font-headline text-xs font-bold text-text-main">VisionAdapter</span>
+              <span class="font-code text-[9px] px-1.5 py-0.2 rounded bg-success/15 text-success font-semibold">Active</span>
             </div>
-            <div class="font-body text-[11px] text-[#8e95a5]">Intercepts PNG, JPG, WEBP, and PDF frames</div>
-            <div class="font-code text-[10px] text-[#4cd7f6] pt-0.5">Swaps to: ag/gemini-2.5-flash-high</div>
+            <div class="font-body text-[11px] text-text-muted">Intercepts PNG, JPG, WEBP, and PDF frames</div>
+            <div class="font-code text-[10px] text-info pt-0.5">Swaps to: ag/gemini-2.5-flash-high</div>
           </div>
         </div>
 
-        <div class="w-2 h-2 rounded-full bg-[#4edea3] animate-pulse"></div>
+        <div class="w-2 h-2 rounded-full bg-success animate-pulse"></div>
       </div>
 
       <!-- Audio Adapter -->
-      <div class="p-3.5 rounded-lg bg-[#0d1017] border border-[#232a3b] flex items-center justify-between">
+      <div class="p-3.5 rounded-lg bg-surface-2 border border-border flex items-center justify-between">
         <div class="flex items-center gap-3">
-          <div class="p-2 rounded-lg bg-[#ff5c35]/15 text-[#ff5c35]">
+          <div class="p-2 rounded-lg bg-brand-500/15 text-brand-500">
             <Mic class="w-4 h-4" />
           </div>
           <div>
             <div class="flex items-center gap-2">
-              <span class="font-headline text-xs font-bold text-white">AudioInputAdapter</span>
-              <span class="font-code text-[9px] px-1.5 py-0.2 rounded bg-[#ff8469]/15 text-[#ff8469] font-semibold">Standby</span>
+              <span class="font-headline text-xs font-bold text-text-main">AudioInputAdapter</span>
+              <span class="font-code text-[9px] px-1.5 py-0.2 rounded bg-brand-400/15 text-brand-400 font-semibold">Standby</span>
             </div>
-            <div class="font-body text-[11px] text-[#8e95a5]">Intercepts MP3, WAV, FLAC streams</div>
-            <div class="font-code text-[10px] text-[#ff8469] pt-0.5">Swaps to: openai/whisper-large-v3-turbo</div>
+            <div class="font-body text-[11px] text-text-muted">Intercepts MP3, WAV, FLAC streams</div>
+            <div class="font-code text-[10px] text-brand-400 pt-0.5">Swaps to: openai/whisper-large-v3-turbo</div>
           </div>
         </div>
 
@@ -653,8 +653,8 @@
   <!-- Create Modal (Stitch Mac-Style) -->
   {#if isCreatingOpen}
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
-      <div class="w-full max-w-md p-6 rounded-2xl bg-[#181d27] border border-[#2b354a] shadow-2xl space-y-4">
-        <div class="flex items-center justify-between pb-2 border-b border-[#232a3b]">
+      <div class="w-full max-w-md p-6 rounded-2xl bg-surface-2 border border-border shadow-2xl space-y-4">
+        <div class="flex items-center justify-between pb-2 border-b border-border">
           <div class="flex items-center gap-2">
             <button
               type="button"
@@ -664,7 +664,7 @@
             ></button>
             <div class="w-3 h-3 rounded-full bg-[#ffbd2e]"></div>
             <div class="w-3 h-3 rounded-full bg-[#27c93f]"></div>
-            <span class="ml-2 font-headline text-sm font-bold text-white">
+            <span class="ml-2 font-headline text-sm font-bold text-text-main">
               Create Virtual Model Combo
             </span>
           </div>
@@ -672,41 +672,41 @@
 
         <form onsubmit={handleCreateCombo} class="space-y-3 font-body text-xs">
           <div>
-            <label for="create-combo-name" class="block font-semibold text-[#8e95a5] mb-1">Combo Name *</label>
+            <label for="create-combo-name" class="block font-semibold text-text-muted mb-1">Combo Name *</label>
             <input
               id="create-combo-name"
               type="text"
               placeholder="e.g. smart-combo, code-fast"
               bind:value={newComboName}
               required
-              class="w-full bg-[#0d1017] border border-[#232a3b] rounded-lg px-3 py-2 font-code text-xs text-white focus:outline-none focus:border-[#ff5c35]"
+              class="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 font-code text-xs text-text-main focus:outline-none focus:border-brand-500"
             />
           </div>
 
           <div>
-            <label for="create-strategy-select" class="block font-semibold text-[#8e95a5] mb-1">Routing Strategy</label>
+            <label for="create-strategy-select" class="block font-semibold text-text-muted mb-1">Routing Strategy</label>
             <select
               id="create-strategy-select"
               bind:value={newComboStrategy}
-              class="w-full bg-[#0d1017] border border-[#232a3b] rounded-lg px-3 py-2 font-code text-xs text-white focus:outline-none focus:border-[#ff5c35]"
+              class="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 font-code text-xs text-text-main focus:outline-none focus:border-brand-500"
             >
               <option value="fallback">Sequential Fallback (Recommended)</option>
               <option value="round-robin">Round Robin - Load Spread</option>
             </select>
           </div>
 
-          <div class="flex justify-end gap-2 pt-3 border-t border-[#232a3b]">
+          <div class="flex justify-end gap-2 pt-3 border-t border-border">
             <button
               type="button"
               onclick={() => (isCreatingOpen = false)}
-              class="px-4 py-2 rounded-lg text-[#8e95a5] hover:text-white cursor-pointer"
+              class="px-4 py-2 rounded-lg text-text-muted hover:text-text-main cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isSaving}
-              class="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#ff5c35] hover:brightness-110 text-white font-bold shadow-md shadow-[#ff5c35]/25 cursor-pointer"
+              class="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 text-white font-bold shadow-md shadow-brand-500/25 cursor-pointer"
             >
               <Check class="w-3.5 h-3.5" />
               <span>Create Combo</span>

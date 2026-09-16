@@ -9,6 +9,7 @@
   import Sidebar, { type ActiveTab } from './components/Sidebar.svelte'
   import TerminalView from './components/TerminalView.svelte'
   import TopBar from './components/TopBar.svelte'
+  import { getAuthHeaders } from './api/client'
 
   let activeTab = $state<ActiveTab>('connections')
   let connections = $state<ProviderConnection[]>([])
@@ -41,30 +42,40 @@
 
   let activeConnectionsCount = $derived(connections.filter((c) => c.isActive === 1).length)
 
+  const pageMeta: Record<ActiveTab, { title: string; description: string }> = {
+    analytics: { title: 'Overview & Usage', description: 'Real-time routing and token telemetry' },
+    connections: { title: 'Providers & Endpoints', description: 'Manage your AI provider connections' },
+    combos: { title: 'Combo & Routing', description: 'Model combos and failover strategies' },
+    keys: { title: 'CLI & Remote Access', description: 'API keys for your CLI tools' },
+    terminal: { title: 'Console Logs', description: 'Live gateway event stream' },
+    settings: { title: 'Token Saver & Quota', description: 'RTK engines and system configuration' },
+  }
+
   function handleOpenNewCombo() {
     activeTab = 'combos'
     isCreateComboOpen = true
   }
 </script>
 
-<div class="flex h-screen w-screen bg-[#0b0e13] text-[#e1e2ea] font-body selection:bg-[#ff5c35]/30 selection:text-white overflow-hidden">
-  <!-- Left Sidebar (Fixed 240px from Stitch Design) -->
-  <Sidebar
-    bind:activeTab
-    activeConnections={activeConnectionsCount}
-    totalConnections={connections.length}
-    onNewCombo={handleOpenNewCombo}
-  />
+<div class="flex h-screen w-full overflow-hidden bg-bg text-text-main font-body transition-colors duration-300">
+  <!-- Left Sidebar (upstream w-72 frosted shell) -->
+  <Sidebar bind:activeTab activeConnections={activeConnectionsCount} totalConnections={connections.length} />
 
   <!-- Main Viewport (TopBar + Scrollable Canvas) -->
-  <div class="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
-    <TopBar onNewCombo={handleOpenNewCombo} />
+  <div class="flex-1 flex flex-col min-w-0 h-full relative isolate">
+    <!-- Faint grid background (upstream landing-grid) -->
+    <div class="landing-grid absolute inset-0 pointer-events-none -z-10" aria-hidden="true"></div>
+    <TopBar
+      pageTitle={pageMeta[activeTab].title}
+      pageDescription={pageMeta[activeTab].description}
+      onNewCombo={handleOpenNewCombo}
+    />
 
-    <main class="flex-1 overflow-y-auto p-6 bg-[#0b0e13]">
-      <div class="max-w-[1560px] mx-auto">
+    <main class="flex-1 overflow-y-auto custom-scrollbar p-6 lg:p-10">
+      <div class="max-w-7xl mx-auto">
         {#if isLoading}
-          <div class="flex flex-col items-center justify-center h-[70vh] gap-3 text-[#8e95a5]">
-            <Loader2 class="w-7 h-7 animate-spin text-[#ff5c35]" />
+          <div class="flex flex-col items-center justify-center h-[70vh] gap-3 text-text-muted">
+            <Loader2 class="w-7 h-7 animate-spin text-brand-500" />
             <span class="font-code text-xs">Connecting to 9Router Localhost Gateway (:20130)...</span>
           </div>
         {:else}
@@ -86,3 +97,4 @@
     </main>
   </div>
 </div>
+

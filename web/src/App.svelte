@@ -6,6 +6,7 @@
   import ApiKeysView from './components/ApiKeysView.svelte'
   import CombosView from './components/combos/CombosView.svelte'
   import ConnectionsView from './components/connections/ConnectionsView.svelte'
+  import MediaWebView from './components/media/MediaWebView.svelte'
   import SettingsView from './components/SettingsView.svelte'
   import Sidebar from './components/Sidebar.svelte'
   import TerminalView from './components/TerminalView.svelte'
@@ -22,7 +23,7 @@
   let settings = $state<Settings>({})
   let isLoading = $state(true)
   let isCreateComboOpen = $state(false)
-
+  let selectedProviderId = $state<string | null>(null)
   function navigate(tab: ActiveTab, replace = false) {
     activeTab = tab
     const path = TAB_ROUTES[tab]
@@ -95,6 +96,7 @@
     keys: { title: 'CLI & Remote Access', description: 'API keys for your CLI tools' },
     terminal: { title: 'Console Logs', description: 'Live gateway event stream' },
     settings: { title: 'Token Saver & Quota', description: 'RTK engines and system configuration' },
+    'media-web': { title: 'Web Fetch & Search', description: 'Configure web search and scrape tools' },
   }
 
   function handleOpenNewCombo() {
@@ -105,7 +107,15 @@
 
 <div class="flex h-screen w-full overflow-hidden bg-bg text-text-main font-body transition-colors duration-300">
   <!-- Left Sidebar (upstream w-72 frosted shell) -->
-  <Sidebar bind:activeTab {navigate} activeConnections={activeConnectionsCount} totalConnections={connections.length} />
+  <Sidebar
+    bind:activeTab
+    navigate={(tab, replace) => {
+      if (tab === 'connections') selectedProviderId = null
+      navigate(tab, replace)
+    }}
+    activeConnections={activeConnectionsCount}
+    totalConnections={connections.length}
+  />
 
   <!-- Main Viewport (TopBar + Scrollable Canvas) -->
   <div class="flex-1 flex flex-col min-w-0 h-full relative isolate">
@@ -126,9 +136,19 @@
           </div>
         {:else}
           {#if activeTab === 'connections'}
-            <ConnectionsView {connections} {providerNodes} onRefresh={loadData} />
+            <ConnectionsView {connections} {providerNodes} onRefresh={loadData} bind:selectedProviderId />
           {:else if activeTab === 'combos'}
             <CombosView {combos} {connections} {providerNodes} onRefresh={loadData} bind:isCreatingOpen={isCreateComboOpen} />
+          {:else if activeTab === 'media-web'}
+            <MediaWebView
+              {connections}
+              {combos}
+              onRefresh={loadData}
+              onSelectProvider={(id) => {
+                selectedProviderId = id
+                navigate('connections')
+              }}
+            />
           {:else if activeTab === 'analytics'}
             <AnalyticsView {connections} {providerNodes} />
           {:else if activeTab === 'terminal'}

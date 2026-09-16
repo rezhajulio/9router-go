@@ -19,15 +19,15 @@
     connections?: ProviderConnection[]
     providerNodes?: ProviderNode[]
     onRefresh: () => void
+    selectedProviderId?: string | null
   }
 
   let {
     connections = [],
     providerNodes = [],
     onRefresh,
+    selectedProviderId = $bindable(null),
   }: Props = $props()
-
-  let selectedProviderId = $state<string | null>(null)
 
   // Modals
   let showAddOpenAIModal = $state(false)

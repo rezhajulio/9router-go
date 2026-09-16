@@ -186,7 +186,7 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     name: 'Freebuff',
     category: 'free',
     alias: 'fb',
-    color: '#84CC16',
+    color: '#0a0a0b',
     icon: 'bolt',
     noAuth: false
   },

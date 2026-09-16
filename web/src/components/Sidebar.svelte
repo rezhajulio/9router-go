@@ -13,15 +13,20 @@
     Terminal
   } from 'lucide-svelte'
   import { api } from '../api/client'
+  import { TAB_ROUTES, type ActiveTab } from '../lib/router'
 
-  export type ActiveTab = 'analytics' | 'combos' | 'connections' | 'settings' | 'keys' | 'terminal'
+  export type { ActiveTab }
 
   let {
     activeTab = $bindable('connections'),
+    navigate = (tab: ActiveTab) => {
+      activeTab = tab
+    },
     activeConnections = 0,
     totalConnections = 0
   }: {
     activeTab: ActiveTab
+    navigate?: (tab: ActiveTab, replace?: boolean) => void
     activeConnections: number
     totalConnections: number
   } = $props()
@@ -106,9 +111,14 @@
         {#each group.items as item (item.tab)}
           {@const Icon = item.icon}
           {@const isActive = activeTab === item.tab}
-          <button
-            type="button"
-            onclick={() => (activeTab = item.tab)}
+          <a
+            href={TAB_ROUTES[item.tab]}
+            onclick={(e) => {
+              if (!e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && e.button === 0) {
+                e.preventDefault()
+                navigate(item.tab)
+              }
+            }}
             class="w-full flex items-center justify-between gap-3 px-3 py-2 rounded-[10px] transition-all group cursor-pointer {isActive
               ? 'bg-brand-500/10 text-brand-600 dark:text-brand-400'
               : 'text-text-muted hover:bg-surface-2 hover:text-text-main'}"
@@ -124,7 +134,7 @@
                 {item.badge}
               </span>
             {/if}
-          </button>
+          </a>
         {/each}
       </div>
     {/each}

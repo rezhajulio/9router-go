@@ -158,7 +158,6 @@ func SetupRoutes(r interface {
 	r.Get("/api/settings", dashH.HandleGetSettings)
 	r.Put("/api/settings", dashH.HandleUpdateSettings)
 	r.Patch("/api/settings", dashH.HandleUpdateSettings)
-	r.Get("/settings", dashH.HandleGetSettings)
 	r.Put("/settings", dashH.HandleUpdateSettings)
 	r.Patch("/settings", dashH.HandleUpdateSettings)
 }
@@ -178,12 +177,15 @@ func SetupServerRouter(r chi.Router, repo *db.Repo, ts *TokenSaverConfig) {
 	r.Get("/connections", webH.ServeHTTP)
 	r.Get("/combos", webH.ServeHTTP)
 	r.Get("/analytics", webH.ServeHTTP)
-	r.Get("/settings", webH.ServeHTTP)
+	r.Get("/terminal", webH.ServeHTTP)
 	r.Get("/keys", webH.ServeHTTP)
+	r.Get("/settings", webH.ServeHTTP)
+	r.Get("/providers", webH.ServeHTTP)
+	r.Get("/usage", webH.ServeHTTP)
+	r.Get("/quota", webH.ServeHTTP)
 	r.HandleFunc("/assets/*", webH.ServeHTTP)
 	r.HandleFunc("/providers/*", webH.ServeHTTP)
 	r.Get("/favicon.ico", webH.ServeHTTP)
-
 	r.HandleFunc("/api/hello", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		if r.Method != http.MethodHead {

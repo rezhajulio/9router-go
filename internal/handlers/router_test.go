@@ -93,3 +93,63 @@ func TestSetupServerRouter_PprofMounted(t *testing.T) {
 		}
 	}
 }
+
+func TestSetupServerRouter_SPARoutes(t *testing.T) {
+	database, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	repo := db.NewRepo(database)
+	r := chi.NewRouter()
+	SetupServerRouter(r, repo, nil)
+
+	spaPaths := []string{
+		"/dashboard",
+		"/dashboard/combos",
+		"/dashboard/providers",
+		"/dashboard/terminal",
+		"/dashboard/usage",
+		"/dashboard/quota",
+		"/connections",
+		"/combos",
+		"/analytics",
+		"/terminal",
+		"/keys",
+		"/settings",
+		"/providers",
+		"/usage",
+		"/quota",
+	}
+	for _, p := range spaPaths {
+		req := httptest.NewRequest("GET", p, nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected GET %s to return 200, got %d (Location: %s): %s", p, w.Code, w.Header().Get("Location"), w.Body.String())
+		}
+	}
+
+	// Ensure static assets work
+	reqAsset := httptest.NewRequest("GET", "/providers/anthropic.png", nil)
+	wAsset := httptest.NewRecorder()
+	r.ServeHTTP(wAsset, reqAsset)
+	if wAsset.Code != http.StatusOK {
+		t.Errorf("expected GET /providers/anthropic.png to return 200, got %d", wAsset.Code)
+	}
+
+	// Ensure non-existent static assets return 404
+	reqMissing := httptest.NewRequest("GET", "/assets/missing.js", nil)
+	wMissing := httptest.NewRecorder()
+	r.ServeHTTP(wMissing, reqMissing)
+	if wMissing.Code != http.StatusNotFound {
+		t.Errorf("expected GET /assets/missing.js to return 404, got %d", wMissing.Code)
+	}
+
+	// Ensure API endpoints like /api/settings are NOT shadowed by SPA handler
+	reqAPI := httptest.NewRequest("GET", "/api/settings", nil)
+	wAPI := httptest.NewRecorder()
+	r.ServeHTTP(wAPI, reqAPI)
+	// When no API keys exist in test DB, RequireApiKey allows or denies based on settings
+	if wAPI.Code == http.StatusNotFound {
+		t.Errorf("expected /api/settings to be handled by API handler, not 404")
+	}
+}

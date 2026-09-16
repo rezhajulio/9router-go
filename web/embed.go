@@ -30,9 +30,12 @@ func Handler() http.Handler {
 		// If the file exists in the embedded asset FS, serve it directly (CSS, JS, SVG, etc.)
 		f, err := subFS.Open(path)
 		if err == nil {
+			stat, statErr := f.Stat()
 			f.Close()
-			fileServer.ServeHTTP(w, r)
-			return
+			if statErr == nil && !stat.IsDir() {
+				fileServer.ServeHTTP(w, r)
+				return
+			}
 		}
 
 		// If path has a file extension (e.g. .js, .css, .ico, .png) and wasn't found, return 404

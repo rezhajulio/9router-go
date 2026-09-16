@@ -7,12 +7,14 @@
   import CombosView from './components/combos/CombosView.svelte'
   import ConnectionsView from './components/connections/ConnectionsView.svelte'
   import SettingsView from './components/SettingsView.svelte'
-  import Sidebar, { type ActiveTab } from './components/Sidebar.svelte'
+  import Sidebar from './components/Sidebar.svelte'
   import TerminalView from './components/TerminalView.svelte'
   import TopBar from './components/TopBar.svelte'
-  import { getAuthHeaders } from './api/client'
+  import { pathToTab, TAB_ROUTES, type ActiveTab } from './lib/router'
 
-  let activeTab = $state<ActiveTab>('connections')
+  let activeTab = $state<ActiveTab>(
+    typeof window !== 'undefined' ? pathToTab(window.location.pathname) : 'connections'
+  )
   let connections = $state<ProviderConnection[]>([])
   let providerNodes = $state<ProviderNode[]>([])
   let combos = $state<Combo[]>([])
@@ -20,6 +22,18 @@
   let settings = $state<Settings>({})
   let isLoading = $state(true)
   let isCreateComboOpen = $state(false)
+
+  function navigate(tab: ActiveTab, replace = false) {
+    activeTab = tab
+    const path = TAB_ROUTES[tab]
+    if (typeof window !== 'undefined' && window.location.pathname !== path) {
+      if (replace) {
+        window.history.replaceState({ tab }, '', path)
+      } else {
+        window.history.pushState({ tab }, '', path)
+      }
+    }
+  }
 
   async function loadData() {
     try {
@@ -43,6 +57,16 @@
   onMount(() => {
     loadData()
 
+    const rawPath = window.location.pathname.replace(/\/+$/, '') || '/'
+    if (rawPath === '/' || rawPath === '/dashboard') {
+      window.history.replaceState({ tab: activeTab }, '', TAB_ROUTES[activeTab])
+    }
+
+    function handlePopState() {
+      activeTab = pathToTab(window.location.pathname)
+    }
+    window.addEventListener('popstate', handlePopState)
+
     const interval = setInterval(async () => {
       try {
         const [connsRes, nodesRes] = await Promise.all([
@@ -58,6 +82,7 @@
 
     return () => {
       clearInterval(interval)
+      window.removeEventListener('popstate', handlePopState)
     }
   })
 
@@ -73,14 +98,14 @@
   }
 
   function handleOpenNewCombo() {
-    activeTab = 'combos'
+    navigate('combos')
     isCreateComboOpen = true
   }
 </script>
 
 <div class="flex h-screen w-full overflow-hidden bg-bg text-text-main font-body transition-colors duration-300">
   <!-- Left Sidebar (upstream w-72 frosted shell) -->
-  <Sidebar bind:activeTab activeConnections={activeConnectionsCount} totalConnections={connections.length} />
+  <Sidebar bind:activeTab {navigate} activeConnections={activeConnectionsCount} totalConnections={connections.length} />
 
   <!-- Main Viewport (TopBar + Scrollable Canvas) -->
   <div class="flex-1 flex flex-col min-w-0 h-full relative isolate">

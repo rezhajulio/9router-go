@@ -182,6 +182,15 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "noAuth": false
   },
   {
+    id: 'freebuff',
+    name: 'Freebuff',
+    category: 'free',
+    alias: 'fb',
+    color: '#84CC16',
+    icon: 'bolt',
+    noAuth: false
+  },
+  {
     "id": "gemini-cli",
     "name": "Gemini CLI",
     "category": "free",
@@ -683,15 +692,6 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "fish",
     "color": "#1E9BF0",
     "icon": "record_voice_over",
-    "noAuth": false
-  },
-  {
-    "id": "freebuff",
-    "name": "freebuff",
-    "category": "apikey",
-    "alias": "freebuff",
-    "color": "#888888",
-    "icon": "dns",
     "noAuth": false
   },
   {

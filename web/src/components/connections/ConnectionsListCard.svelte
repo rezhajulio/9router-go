@@ -67,6 +67,11 @@
     </div>
 
     <div class="flex flex-wrap items-center gap-2">
+      {#if selectedProviderId === 'freebuff'}
+        <Button size="sm" variant="primary" class="text-xs" onclick={startFreebuffFlow}>
+          Authorize Freebuff CLI
+        </Button>
+      {/if}
       <Button size="sm" variant="outline" class="text-xs" onclick={() => alert('Proxy Pool mapping applied')}>
         <Server class="w-3.5 h-3.5 mr-1.5" />
         Apply Proxy

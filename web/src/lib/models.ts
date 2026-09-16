@@ -37,6 +37,7 @@ export const PROVIDER_ID_TO_ALIAS: Record<string, string> = {
   "deepseek": "deepseek",
   "featherless": "featherless",
   "fireworks": "fireworks",
+  "freebuff": "fb",
   "gemini-cli": "gc",
   "gemini": "gemini",
   "github": "gh",
@@ -97,7 +98,47 @@ export const PROVIDER_ID_TO_ALIAS: Record<string, string> = {
   "alitp-intl": "alitp-intl"
 };
 
-export const PROVIDER_MODELS: Record<string, ProviderModel[]> = {
+const FREEBUFF_MODELS: ProviderModel[] = [
+  {
+    "id": "z-ai/glm-5.3-flash",
+    "name": "GLM 5.3 Flash",
+    "capabilities": ["reasoning"]
+  },
+  {
+    "id": "deepseek/deepseek-v4-flash",
+    "name": "DeepSeek V4.1 Flash",
+    "capabilities": ["reasoning"]
+  },
+  {
+    "id": "openai/gpt-5.6-luna",
+    "name": "GPT-5.6 Luna",
+    "capabilities": ["reasoning"]
+  },
+  {
+    "id": "mimo/mimo-v2.5",
+    "name": "MiMo 2.5",
+    "capabilities": ["reasoning"]
+  },
+  {
+    "id": "upstage/solar-pro4",
+    "name": "Solar Pro 4",
+    "capabilities": ["reasoning"]
+  },
+  {
+    "id": "meta/muse-spark-1.2-contributor",
+    "name": "Muse Spark 1.2",
+    "capabilities": ["reasoning"]
+  },
+  {
+    "id": "anthropic/claude-fable-5",
+    "name": "Claude Fable 5 (limited offer)",
+    "capabilities": ["reasoning"]
+  }
+];
+
+export const BUILTIN_MODELS_BY_PROVIDER: Record<string, ProviderModel[]> = {
+  "fb": FREEBUFF_MODELS,
+  "freebuff": FREEBUFF_MODELS,
   "alicode-intl": [
     {
       "id": "qwen3.5-plus",
@@ -5170,6 +5211,7 @@ export const PROVIDER_MODELS: Record<string, ProviderModel[]> = {
     }
   ]
 };
+export const PROVIDER_MODELS = BUILTIN_MODELS_BY_PROVIDER;
 
 export function getModelsByProviderId(providerId: string): ProviderModel[] {
   const alias = PROVIDER_ID_TO_ALIAS[providerId] || providerId;

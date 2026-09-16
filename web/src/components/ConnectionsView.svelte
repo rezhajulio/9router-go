@@ -113,7 +113,7 @@
     })
 
     const total = list.length
-    const connected = list.filter((c) => c.isActive === 1 && c.testStatus !== 'error').length
+    const connected = list.filter((c) => c.isActive === 1 && c.testStatus !== 'error' && !c.lastError).length
     const errorCount = list.filter((c) => c.testStatus === 'error' || !!c.lastError).length
     const allDisabled = total > 0 && list.every((c) => c.isActive === 0)
     const latestError = list.find((c) => !!c.lastError)?.lastError
@@ -818,9 +818,13 @@
                 <div class="min-w-0 flex-1">
                   <div class="flex items-center gap-2 flex-wrap">
                     <p class="font-medium text-sm text-text-main truncate">{displayName}</p>
-                    <Badge variant={isActive ? 'success' : 'default'} size="sm" dot={isActive}>
-                      {isActive ? 'active' : 'disabled'}
-                    </Badge>
+                    {#if conn.testStatus === 'error' || !!conn.lastError}
+                      <Badge variant="error" size="sm" dot>error</Badge>
+                    {:else if isActive}
+                      <Badge variant="success" size="sm" dot>active</Badge>
+                    {:else}
+                      <Badge variant="default" size="sm">disabled</Badge>
+                    {/if}
                     <Badge variant="outline" size="sm">{isOAuth ? 'OAuth' : (conn.authType || 'API Key')}</Badge>
                     <span class="text-xs text-text-muted font-mono">#{index + 1}</span>
                     {#if latency != null}
@@ -828,7 +832,7 @@
                     {/if}
                   </div>
 
-                  {#if conn.lastError && isActive}
+                  {#if conn.lastError}
                     <p class="text-xs text-red-500 font-mono mt-0.5 truncate max-w-xl" title={conn.lastError}>
                       {conn.lastError}
                     </p>
@@ -1131,7 +1135,7 @@
             >
               <Card
                 padding="xs"
-                class="h-full hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors p-3 rounded-xl border border-border bg-surface {isAllDisabled ? 'opacity-50' : ''}"
+                class="h-full hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors p-3 rounded-xl border {isAllDisabled ? 'border-border bg-surface opacity-50' : stats.errorCount > 0 ? 'border-red-500/50 bg-red-500/[0.02]' : stats.connected > 0 ? 'border-emerald-500/40 bg-emerald-500/[0.02]' : 'border-border bg-surface'}"
               >
                 <div class="flex min-w-0 items-center justify-between gap-3">
                   <div class="flex min-w-0 items-center gap-3">
@@ -1158,6 +1162,15 @@
                               Disabled
                             </span>
                           </Badge>
+                        {:else if stats.errorCount > 0}
+                          <Badge variant="error" size="sm" dot>
+                            {stats.errorCount} Error
+                          </Badge>
+                          {#if stats.connected > 0}
+                            <Badge variant="success" size="sm" dot>
+                              {stats.connected} Connected
+                            </Badge>
+                          {/if}
                         {:else if stats.connected > 0}
                           <Badge variant="success" size="sm" dot>
                             {stats.connected} Connected
@@ -1225,7 +1238,7 @@
             >
               <Card
                 padding="xs"
-                class="h-full hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors p-3 rounded-xl border border-border bg-surface {isAllDisabled ? 'opacity-50' : ''}"
+                class="h-full hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors p-3 rounded-xl border {isAllDisabled ? 'border-border bg-surface opacity-50' : stats.errorCount > 0 ? 'border-red-500/50 bg-red-500/[0.02]' : stats.connected > 0 ? 'border-emerald-500/40 bg-emerald-500/[0.02]' : 'border-border bg-surface'}"
               >
                 <div class="flex min-w-0 items-center justify-between gap-3">
                   <div class="flex min-w-0 items-center gap-3">
@@ -1252,6 +1265,15 @@
                               Disabled
                             </span>
                           </Badge>
+                        {:else if stats.errorCount > 0}
+                          <Badge variant="error" size="sm" dot>
+                            {stats.errorCount} Error
+                          </Badge>
+                          {#if stats.connected > 0}
+                            <Badge variant="success" size="sm" dot>
+                              {stats.connected} Connected
+                            </Badge>
+                          {/if}
                         {:else if stats.connected > 0}
                           <Badge variant="success" size="sm" dot>
                             {stats.connected} Connected
@@ -1316,7 +1338,7 @@
             >
               <Card
                 padding="xs"
-                class="h-full hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors p-3 rounded-xl border border-border bg-surface {isAllDisabled ? 'opacity-50' : ''}"
+                class="h-full hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors p-3 rounded-xl border {isAllDisabled ? 'border-border bg-surface opacity-50' : stats.errorCount > 0 ? 'border-red-500/50 bg-red-500/[0.02]' : (stats.connected > 0 || p.noAuth) ? 'border-emerald-500/40 bg-emerald-500/[0.02]' : 'border-border bg-surface'}"
               >
                 <div class="flex min-w-0 items-center justify-between gap-3">
                   <div class="flex min-w-0 items-center gap-3">
@@ -1343,6 +1365,15 @@
                               Disabled
                             </span>
                           </Badge>
+                        {:else if stats.errorCount > 0}
+                          <Badge variant="error" size="sm" dot>
+                            {stats.errorCount} Error
+                          </Badge>
+                          {#if stats.connected > 0}
+                            <Badge variant="success" size="sm" dot>
+                              {stats.connected} Connected
+                            </Badge>
+                          {/if}
                         {:else if p.noAuth}
                           <Badge variant="success" size="sm" dot>Ready</Badge>
                         {:else if stats.connected > 0}
@@ -1409,7 +1440,7 @@
             >
               <Card
                 padding="xs"
-                class="h-full hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors p-3 rounded-xl border border-border bg-surface {isAllDisabled ? 'opacity-50' : ''}"
+                class="h-full hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors p-3 rounded-xl border {isAllDisabled ? 'border-border bg-surface opacity-50' : stats.errorCount > 0 ? 'border-red-500/50 bg-red-500/[0.02]' : stats.connected > 0 ? 'border-emerald-500/40 bg-emerald-500/[0.02]' : 'border-border bg-surface'}"
               >
                 <div class="flex min-w-0 items-center justify-between gap-3">
                   <div class="flex min-w-0 items-center gap-3">
@@ -1436,6 +1467,15 @@
                               Disabled
                             </span>
                           </Badge>
+                        {:else if stats.errorCount > 0}
+                          <Badge variant="error" size="sm" dot>
+                            {stats.errorCount} Error
+                          </Badge>
+                          {#if stats.connected > 0}
+                            <Badge variant="success" size="sm" dot>
+                              {stats.connected} Connected
+                            </Badge>
+                          {/if}
                         {:else if stats.connected > 0}
                           <Badge variant="success" size="sm" dot>
                             {stats.connected} Connected

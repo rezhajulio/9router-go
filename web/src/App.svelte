@@ -42,6 +42,23 @@
 
   onMount(() => {
     loadData()
+
+    const interval = setInterval(async () => {
+      try {
+        const [connsRes, nodesRes] = await Promise.all([
+          api.getConnections().catch(() => null),
+          api.getProviderNodes().catch(() => null)
+        ])
+        if (connsRes) connections = connsRes
+        if (nodesRes) providerNodes = nodesRes
+      } catch {
+        // silent refresh error
+      }
+    }, 3000)
+
+    return () => {
+      clearInterval(interval)
+    }
   })
 
   let activeConnectionsCount = $derived(connections.filter((c) => c.isActive === 1).length)

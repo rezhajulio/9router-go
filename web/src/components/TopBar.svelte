@@ -31,7 +31,7 @@
   <!-- Left: breadcrumb + title -->
   <div class="flex items-center gap-2 min-w-0">
     <div
-      class="flex items-center justify-center size-8 rounded-[10px] bg-gradient-to-br from-brand-500 to-brand-700 shadow-[var(--shadow-warm)] flex-shrink-0"
+      class="flex items-center justify-center size-8 rounded-[10px] bg-gradient-to-br from-brand-500 to-brand-700 shadow-[var(--shadow-warm)] flex-shrink-0 animate-disco"
     >
       <span class="text-text-main font-bold text-sm">9R</span>
     </div>

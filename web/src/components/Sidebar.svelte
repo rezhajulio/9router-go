@@ -69,7 +69,7 @@
   <div class="px-6 py-4 flex flex-col gap-2">
     <div class="flex items-center gap-3">
       <div
-        class="flex items-center justify-center size-9 rounded-[10px] bg-gradient-to-br from-brand-500 to-brand-700 shadow-[var(--shadow-warm)]"
+        class="flex items-center justify-center size-9 rounded-[10px] bg-gradient-to-br from-brand-500 to-brand-700 shadow-[var(--shadow-warm)] animate-disco"
       >
         <Network class="text-text-main w-5 h-5" />
       </div>
@@ -84,7 +84,10 @@
       class="flex items-center justify-between px-3 py-1.5 rounded-[10px] bg-surface border border-border-subtle text-xs font-medium text-text-muted"
     >
       <div class="flex items-center gap-1.5">
-        <span class="w-1.5 h-1.5 rounded-full bg-success animate-pulse"></span>
+        <span class="relative flex h-2 w-2">
+          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+          <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+        </span>
         Gateway :20130
       </div>
       <span class="text-success font-semibold">ONLINE</span>

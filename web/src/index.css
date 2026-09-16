@@ -137,3 +137,18 @@ body {
 ::selection {
   background: rgba(229, 106, 74, 0.18);
 }
+
+@keyframes disco-glow {
+  0%, 100% {
+    box-shadow: 0 0 15px rgba(229, 106, 74, 0.6), 0 0 25px rgba(245, 158, 11, 0.3);
+  }
+  33% {
+    box-shadow: 0 0 18px rgba(16, 185, 129, 0.6), 0 0 28px rgba(59, 130, 246, 0.3);
+  }
+  66% {
+    box-shadow: 0 0 18px rgba(168, 85, 247, 0.6), 0 0 28px rgba(236, 72, 153, 0.3);
+  }
+}
+.animate-disco {
+  animation: disco-glow 3s infinite ease-in-out;
+}

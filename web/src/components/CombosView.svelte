@@ -3,6 +3,7 @@
     Activity,
     ArrowDown,
     ArrowUp,
+    Brain,
     Check,
     Copy,
     Eye,
@@ -894,8 +895,14 @@
                 >
                   <GripVertical class="w-3.5 h-3.5 text-text-muted cursor-grab shrink-0" />
                   <span class="text-[10px] font-medium text-text-muted w-3 text-center shrink-0">{idx + 1}</span>
-                  <div class="min-w-0 flex-1 truncate font-mono text-xs text-text-main">
-                    {model}
+                  <div class="min-w-0 flex-1 flex items-center gap-1.5 font-mono text-xs text-text-main truncate">
+                    <span class="truncate">{model}</span>
+                    {#if hasVision(model)}
+                      <Eye class="w-3.5 h-3.5 text-blue-500 shrink-0" title="Vision — Supports image input" />
+                    {/if}
+                    {#if hasReasoning(model)}
+                      <Brain class="w-3.5 h-3.5 text-amber-500 shrink-0" title="Reasoning / Neuron — Supports thinking" />
+                    {/if}
                   </div>
                   <div class="flex items-center gap-0.5 shrink-0">
                     <button
@@ -1056,16 +1063,10 @@
                 <div class="flex items-center gap-1.5">
                   <span class="font-mono text-xs font-medium text-text-main truncate">{item.value}</span>
                   {#if item.vision}
-                    <span
-                      class="material-symbols-outlined text-[13px] text-blue-500 leading-none"
-                      title="Vision — Supports image input">visibility</span
-                    >
+                    <Eye class="w-3.5 h-3.5 text-blue-500 shrink-0" title="Vision — Supports image input" />
                   {/if}
                   {#if item.reasoning}
-                    <span
-                      class="material-symbols-outlined text-[13px] text-amber-500 leading-none"
-                      title="Reasoning — Supports reasoning / thinking">neurology</span
-                    >
+                    <Brain class="w-3.5 h-3.5 text-amber-500 shrink-0" title="Reasoning / Neuron — Supports thinking" />
                   {/if}
                 </div>
                 <span class="text-[10px] text-text-muted">{item.provider}</span>

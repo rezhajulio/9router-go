@@ -11,6 +11,9 @@ export interface ProviderConnection {
   data: string // JSON string
   createdAt: string
   updatedAt: string
+  testStatus?: string | null
+  lastError?: string | null
+  displayName?: string | null
 }
 
 export interface Combo {
@@ -112,11 +115,16 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  updateConnection: (id: string, payload: Partial<ProviderConnection>) =>
-    request<{ success: boolean }>(`/api/connections/${encodeURIComponent(id)}`, {
+  updateConnection: (id: string, payload: Partial<ProviderConnection> | { isActive?: boolean | number; [key: string]: unknown }) => {
+    const body: Record<string, unknown> = { ...payload }
+    if ('isActive' in body && typeof body.isActive === 'number') {
+      body.isActive = body.isActive === 1
+    }
+    return request<{ success: boolean }>(`/api/connections/${encodeURIComponent(id)}`, {
       method: 'PUT',
-      body: JSON.stringify(payload),
-    }),
+      body: JSON.stringify(body),
+    })
+  },
   deleteConnection: (id: string) =>
     request<{ success: boolean }>(`/api/connections/${encodeURIComponent(id)}`, {
       method: 'DELETE',

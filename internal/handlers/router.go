@@ -30,6 +30,7 @@ func SetupRoutes(r interface {
 	Get(pattern string, handlerFn http.HandlerFunc)
 	Post(pattern string, handlerFn http.HandlerFunc)
 	Put(pattern string, handlerFn http.HandlerFunc)
+	Patch(pattern string, handlerFn http.HandlerFunc)
 	Delete(pattern string, handlerFn http.HandlerFunc)
 	HandleFunc(pattern string, handlerFn http.HandlerFunc)
 }, repo *db.Repo, ts *TokenSaverConfig) {
@@ -148,11 +149,17 @@ func SetupRoutes(r interface {
 	r.Delete("/api/models/custom/{key}", dashH.HandleDeleteCustomModel)
 	r.Get("/api/models/disabled", dashH.HandleGetDisabledModels)
 	r.Put("/api/models/disabled/{provider}", dashH.HandleSaveDisabledModels)
+	r.Get("/api/models/alias", dashH.HandleGetModelAliases)
+	r.Put("/api/models/alias", dashH.HandleSetModelAlias)
+	r.Delete("/api/models/alias", dashH.HandleDeleteModelAlias)
 
 	r.Get("/api/settings", dashH.HandleGetSettings)
 	r.Put("/api/settings", dashH.HandleUpdateSettings)
+	r.Patch("/api/settings", dashH.HandleUpdateSettings)
+	r.Get("/settings", dashH.HandleGetSettings)
+	r.Put("/settings", dashH.HandleUpdateSettings)
+	r.Patch("/settings", dashH.HandleUpdateSettings)
 }
-
 // SetupServerRouter mounts public endpoints (/health, /api/hello) and
 // API-key protected routes (all engine + admin routes) on the chi router.
 func SetupServerRouter(r chi.Router, repo *db.Repo, ts *TokenSaverConfig) {

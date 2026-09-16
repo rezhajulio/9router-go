@@ -203,3 +203,61 @@ func (h *DashboardHandler) HandleSaveDisabledModels(w http.ResponseWriter, r *ht
 		"disabledModels": modelsArr,
 	})
 }
+
+// HandleGetModelAliases handles GET /api/models/alias.
+func (h *DashboardHandler) HandleGetModelAliases(w http.ResponseWriter, r *http.Request) {
+	aliases, err := h.Repo.GetModelAliases()
+	if err != nil {
+		handlerutil.WriteJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	res := make(map[string]string, len(aliases))
+	for k, v := range aliases {
+		res[string(k)] = v
+	}
+	handlerutil.WriteJSON(w, http.StatusOK, map[string]any{"aliases": res})
+}
+
+// HandleSetModelAlias handles PUT /api/models/alias.
+func (h *DashboardHandler) HandleSetModelAlias(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		handlerutil.WriteJSONError(w, http.StatusBadRequest, "failed to read body")
+		return
+	}
+	defer r.Body.Close()
+
+	var req struct {
+		Model string `json:"model"`
+		Alias string `json:"alias"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		handlerutil.WriteJSONError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.Model == "" || req.Alias == "" {
+		handlerutil.WriteJSONError(w, http.StatusBadRequest, "model and alias required")
+		return
+	}
+
+	valBytes, _ := json.Marshal(req.Model)
+	if err := h.Repo.SetKV("modelAliases", req.Alias, string(valBytes)); err != nil {
+		handlerutil.WriteJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	handlerutil.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "model": req.Model, "alias": req.Alias})
+}
+
+// HandleDeleteModelAlias handles DELETE /api/models/alias.
+func (h *DashboardHandler) HandleDeleteModelAlias(w http.ResponseWriter, r *http.Request) {
+	alias := r.URL.Query().Get("alias")
+	if alias == "" {
+		handlerutil.WriteJSONError(w, http.StatusBadRequest, "alias required")
+		return
+	}
+	if err := h.Repo.DeleteKV("modelAliases", alias); err != nil {
+		handlerutil.WriteJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	handlerutil.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
+}

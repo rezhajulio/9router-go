@@ -140,13 +140,16 @@ export const api = {
     }),
 
   // Combos
-  getCombos: () => request<Combo[]>('/api/combos'),
-  createCombo: (payload: { id?: string; name: string; kind?: string; models: string; strategy?: string }) =>
+  getCombos: async () => {
+    const res = await request<any>('/api/combos')
+    return Array.isArray(res) ? res : (res.combos || [])
+  },
+  createCombo: (payload: { id?: string; name: string; kind?: string; models: string | string[]; strategy?: string }) =>
     request<{ success: boolean; id: string }>('/api/combos', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  updateCombo: (id: string, payload: Partial<Combo>) =>
+  updateCombo: (id: string, payload: Partial<Combo> | any) =>
     request<{ success: boolean }>(`/api/combos/${encodeURIComponent(id)}`, {
       method: 'PUT',
       body: JSON.stringify(payload),
@@ -191,10 +194,15 @@ export const api = {
     }),
 
   // Settings
-  getSettings: () => request<Settings>('/api/settings'),
-  updateSettings: (settings: Partial<Settings>) =>
+  getSettings: () => request<Record<string, any>>('/api/settings'),
+  updateSettings: (settings: Record<string, any>) =>
     request<{ success: boolean }>('/api/settings', {
       method: 'PUT',
+      body: JSON.stringify(settings),
+    }),
+  patchSettings: (settings: Record<string, any>) =>
+    request<any>('/api/settings', {
+      method: 'PATCH',
       body: JSON.stringify(settings),
     }),
   // OAuth Flows

@@ -2,718 +2,1117 @@
   import {
     Activity,
     ArrowDown,
-    ArrowRight,
     ArrowUp,
     Check,
     Copy,
-    Cpu,
-    ExternalLink,
     Eye,
-    FileText,
-    GitBranch,
+    Gavel,
     GripVertical,
     Headphones,
     Layers,
     Loader2,
-    Mic,
-    Play,
+    Pencil,
     Plus,
     RefreshCw,
-    Save,
+    Search,
+    Sparkles,
     Trash2,
+    X,
     Zap
   } from 'lucide-svelte'
-  import { api, getAuthHeaders, type Combo } from '../api/client'
-
+  import Toggle from '../lib/ui/Toggle.svelte'
+  import { api, type Combo, type ProviderConnection, type ProviderNode } from '../api/client'
   let {
     combos = [],
+    connections = [],
+    providerNodes = [],
     onRefresh,
     isCreatingOpen = $bindable(false)
   }: {
     combos: Combo[]
+    connections?: ProviderConnection[]
+    providerNodes?: ProviderNode[]
     onRefresh: () => void
     isCreatingOpen?: boolean
   } = $props()
 
-  let selectedComboId = $state<string | null>(null)
-  let newComboName = $state('')
-  let newComboStrategy = $state('fallback')
-
-  let editingModels = $state<string[]>([])
-  let editingStrategy = $state<string>('fallback')
-  let modelInput = $state('')
-  let isSaving = $state(false)
-  let copiedName = $state<string | null>(null)
-
-  // Live Test Playground
-  let testPrompt = $state('Say hello in 3 words')
-  let testOutput = $state('')
-  let isTesting = $state(false)
-  let testLatency = $state<number | null>(null)
-
-  // Filters
-  let searchFilter = $state('')
-  let strategyFilter = $state('ALL')
-
-  let selectedCombo = $derived(combos.find((c) => c.id === selectedComboId))
-
-  $effect(() => {
-    if (selectedComboId === null && combos.length > 0) {
-      selectedComboId = combos[0].id
-    }
-    if (selectedCombo) {
-      try {
-        const parsed = JSON.parse(selectedCombo.models)
-        editingModels = Array.isArray(parsed) ? parsed : [selectedCombo.models]
-      } catch {
-        editingModels = selectedCombo.models ? [selectedCombo.models] : []
-      }
-      editingStrategy = selectedCombo.strategy || 'fallback'
-      testOutput = ''
-      testLatency = null
-    }
+  // Combo Strategy and Capacity Adapter state
+  let comboStrategies = $state<Record<string, { fallbackStrategy?: string; judgeModel?: string }>>({})
+  let capacityAdapter = $state<{
+    vision: { enabled: boolean; roundRobin: boolean; models: string[] }
+    audioInput: { enabled: boolean; roundRobin: boolean; models: string[] }
+  }>({
+    vision: { enabled: true, roundRobin: false, models: ['ag/gemini-3.7-flash-high'] },
+    audioInput: { enabled: true, roundRobin: false, models: [] }
   })
 
-  function copyAlias(name: string) {
-    navigator.clipboard.writeText(name)
-    copiedName = name
-    setTimeout(() => (copiedName = null), 2000)
-  }
+  let isSavingAdapter = $state(false)
+  let copiedId = $state<string | null>(null)
 
-  function handleMoveModel(index: number, delta: number) {
-    const newIdx = index + delta
-    if (newIdx < 0 || newIdx >= editingModels.length) return
-    const updated = [...editingModels]
-    const temp = updated[index]
-    updated[index] = updated[newIdx]
-    updated[newIdx] = temp
-    editingModels = updated
-  }
+  // Edit / Create Modal state
+  let editingCombo = $state<Combo | null>(null)
+  let modalName = $state('')
+  let modalModels = $state<string[]>([])
+  let modalNameError = $state('')
+  let isSavingCombo = $state(false)
 
-  function handleRemoveModel(index: number) {
-    editingModels = editingModels.filter((_, i) => i !== index)
-  }
+  // Model Picker Modal state
+  let showModelPicker = $state(false)
+  let modelPickerTarget = $state<'combo' | 'vision' | 'audio' | 'judge'>('combo')
+  let modelPickerSearch = $state('')
+  let customModelInput = $state('')
 
-  function handleAddModel() {
-    if (!modelInput.trim()) return
-    editingModels = [...editingModels, modelInput.trim()]
-    modelInput = ''
-  }
+  // Confirm Delete Modal state
+  let deletingCombo = $state<Combo | null>(null)
 
-  async function handleSaveCombo() {
-    if (!selectedCombo) return
-    try {
-      isSaving = true
-      await api.updateCombo(selectedCombo.id, {
-        models: JSON.stringify(editingModels),
-        strategy: editingStrategy,
-      })
-      onRefresh()
-      alert('Combo pipeline saved successfully!')
-    } catch (err) {
-      alert(`Failed to save combo: ${err instanceof Error ? err.message : String(err)}`)
-    } finally {
-      isSaving = false
-    }
-  }
+  const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/
 
-  async function handleCreateCombo(e: SubmitEvent) {
-    e.preventDefault()
-    if (!newComboName.trim()) return
-    try {
-      isSaving = true
-      await api.createCombo({
-        name: newComboName.trim(),
-        models: JSON.stringify([]),
-        strategy: newComboStrategy,
-      })
-      isCreatingOpen = false
-      newComboName = ''
-      onRefresh()
-    } catch (err) {
-      alert(`Failed to create combo: ${err instanceof Error ? err.message : String(err)}`)
-    } finally {
-      isSaving = false
-    }
-  }
-
-  async function handleDeleteCombo(id: string) {
-    if (!confirm('Are you sure you want to delete this combo?')) return
-    try {
-      await api.deleteCombo(id)
-      onRefresh()
-      selectedComboId = combos.find((c) => c.id !== id)?.id || null
-    } catch (err) {
-      alert(`Failed to delete combo: ${err instanceof Error ? err.message : String(err)}`)
-    }
-  }
-
-  async function handleRunLiveTest() {
-    if (!selectedCombo) return
-    isTesting = true
-    testOutput = ''
-    testLatency = null
-    const startTime = performance.now()
-
-    try {
-      const res = await fetch('/v1/chat/completions', {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify({
-          model: selectedCombo.name,
-          messages: [{ role: 'user', content: testPrompt }],
-          stream: true,
-          max_tokens: 150,
-        }),
-      })
-
-      if (!res.ok) {
-        const errText = await res.text()
-        throw new Error(errText || `HTTP ${res.status}`)
+  // Normalize models in combo
+  function getComboModels(c: Combo): string[] {
+    if (Array.isArray(c.models)) return c.models
+    if (typeof c.models === 'string') {
+      try {
+        const parsed = JSON.parse(c.models)
+        if (Array.isArray(parsed)) return parsed
+        return [c.models]
+      } catch {
+        return c.models ? [c.models] : []
       }
+    }
+    return []
+  }
 
-      const reader = res.body?.getReader()
-      const decoder = new TextDecoder()
-      if (!reader) return
-
-      let buffer = ''
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-
-        for (const line of lines) {
-          const trimmed = line.trim()
-          if (!trimmed || trimmed.startsWith(':')) continue
-          if (trimmed === 'data: [DONE]') continue
-          if (trimmed.startsWith('data: ')) {
-            try {
-              const chunk = JSON.parse(trimmed.slice(6))
-              const delta = chunk.choices?.[0]?.delta?.content || ''
-              const reasoning = chunk.choices?.[0]?.delta?.reasoning_content || ''
-              if (reasoning) {
-                testOutput += `[thinking: ${reasoning}]`
-              }
-              if (delta) {
-                testOutput += delta
-              }
-            } catch {
-              // ignore
-            }
+  // Load settings for capacityAdapter & comboStrategies
+  async function loadSettings() {
+    try {
+      const s = await api.getSettings()
+      if (s?.comboStrategies && typeof s.comboStrategies === 'object') {
+        comboStrategies = s.comboStrategies
+      }
+      if (s?.capacityAdapter && typeof s.capacityAdapter === 'object') {
+        const ca = s.capacityAdapter
+        capacityAdapter = {
+          vision: {
+            enabled: ca.vision?.enabled !== false,
+            roundRobin: !!ca.vision?.roundRobin,
+            models: Array.isArray(ca.vision?.models) ? ca.vision.models : ['ag/gemini-3.7-flash-high']
+          },
+          audioInput: {
+            enabled: ca.audioInput?.enabled !== false,
+            roundRobin: !!ca.audioInput?.roundRobin,
+            models: Array.isArray(ca.audioInput?.models) ? ca.audioInput.models : []
           }
         }
       }
-      testLatency = Math.round(performance.now() - startTime)
-    } catch (err) {
-      testOutput = `Error: ${err instanceof Error ? err.message : String(err)}`
-    } finally {
-      isTesting = false
+    } catch (e) {
+      console.error('Failed to load settings:', e)
     }
   }
 
-  let filteredCombos = $derived(
-    combos.filter((c) => {
-      if (searchFilter.trim() && !c.name.toLowerCase().includes(searchFilter.toLowerCase())) {
-        return false
+  $effect(() => {
+    loadSettings()
+  })
+
+  // Watch isCreatingOpen prop
+  $effect(() => {
+    if (isCreatingOpen && !editingCombo) {
+      modalName = ''
+      modalModels = []
+      modalNameError = ''
+    }
+  })
+
+  function hasVision(model: string): boolean {
+    const m = model.toLowerCase()
+    return (
+      m.includes('vision') ||
+      m.includes('gemini') ||
+      m.includes('claude-3') ||
+      m.includes('claude-sonnet') ||
+      m.includes('claude-opus') ||
+      m.includes('gpt-4o') ||
+      m.includes('spark') ||
+      m.includes('vl') ||
+      m.includes('flash')
+    )
+  }
+
+  function hasReasoning(model: string): boolean {
+    const m = model.toLowerCase()
+    return (
+      m.includes('reason') ||
+      m.includes('think') ||
+      m.includes('r1') ||
+      m.includes('deepseek') ||
+      m.includes('spark') ||
+      m.includes('high') ||
+      m.includes('o1') ||
+      m.includes('o3') ||
+      m.includes('pro-agent')
+    )
+  }
+
+  function copyName(name: string, id: string) {
+    navigator.clipboard.writeText(name)
+    copiedId = id
+    setTimeout(() => {
+      if (copiedId === id) copiedId = null
+    }, 2000)
+  }
+
+  // Update per-combo strategy
+  async function handleSetStrategy(combo: Combo, newStrategy: string) {
+    const updated = { ...comboStrategies }
+    const current = updated[combo.name] || {}
+    const next = { ...current, fallbackStrategy: newStrategy }
+
+    if (newStrategy === 'fallback' && !next.judgeModel) {
+      delete updated[combo.name]
+    } else {
+      updated[combo.name] = next
+    }
+    comboStrategies = updated
+
+    try {
+      await api.patchSettings({ comboStrategies: updated })
+      await api.updateCombo(combo.id, { strategy: newStrategy })
+      onRefresh()
+    } catch (e) {
+      console.error('Failed to update combo strategy:', e)
+    }
+  }
+
+  async function handleSetJudge(comboName: string, judgeModel: string) {
+    const updated = { ...comboStrategies }
+    const current = updated[comboName] || {}
+    updated[comboName] = { ...current, judgeModel }
+    comboStrategies = updated
+
+    try {
+      await api.patchSettings({ comboStrategies: updated })
+    } catch (e) {
+      console.error('Failed to update judge model:', e)
+    }
+  }
+
+  async function clearJudge(comboName: string) {
+    const updated = { ...comboStrategies }
+    if (updated[comboName]) {
+      const { judgeModel, ...rest } = updated[comboName]
+      if (!rest.fallbackStrategy || rest.fallbackStrategy === 'fallback') {
+        delete updated[comboName]
+      } else {
+        updated[comboName] = rest
       }
-      if (strategyFilter !== 'ALL' && c.strategy !== strategyFilter) {
-        return false
+      comboStrategies = updated
+      try {
+        await api.patchSettings({ comboStrategies: updated })
+      } catch (e) {
+        console.error('Failed to clear judge:', e)
+      }
+    }
+  }
+
+  // Capacity Adapter updates
+  async function saveCapacityAdapter(next: typeof capacityAdapter) {
+    capacityAdapter = next
+    try {
+      isSavingAdapter = true
+      await api.patchSettings({ capacityAdapter: next })
+    } catch (e) {
+      console.error('Failed to update capacity adapter:', e)
+    } finally {
+      isSavingAdapter = false
+    }
+  }
+
+  function toggleAdapter(type: 'vision' | 'audioInput', enabled: boolean) {
+    saveCapacityAdapter({
+      ...capacityAdapter,
+      [type]: { ...capacityAdapter[type], enabled }
+    })
+  }
+
+  function toggleAdapterRoundRobin(type: 'vision' | 'audioInput', roundRobin: boolean) {
+    saveCapacityAdapter({
+      ...capacityAdapter,
+      [type]: { ...capacityAdapter[type], roundRobin }
+    })
+  }
+
+  function moveAdapterModel(type: 'vision' | 'audioInput', index: number, delta: number) {
+    const arr = [...capacityAdapter[type].models]
+    const target = index + delta
+    if (target < 0 || target >= arr.length) return
+    const temp = arr[index]
+    arr[index] = arr[target]
+    arr[target] = temp
+    saveCapacityAdapter({
+      ...capacityAdapter,
+      [type]: { ...capacityAdapter[type], models: arr }
+    })
+  }
+
+  function removeAdapterModel(type: 'vision' | 'audioInput', index: number) {
+    const arr = capacityAdapter[type].models.filter((_, i) => i !== index)
+    saveCapacityAdapter({
+      ...capacityAdapter,
+      [type]: { ...capacityAdapter[type], models: arr }
+    })
+  }
+
+  // Modal Open Handlers
+  function openCreateModal() {
+    editingCombo = null
+    modalName = ''
+    modalModels = []
+    modalNameError = ''
+    isCreatingOpen = true
+  }
+
+  function openEditModal(combo: Combo) {
+    editingCombo = combo
+    modalName = combo.name
+    modalModels = [...getComboModels(combo)]
+    modalNameError = ''
+    isCreatingOpen = true
+  }
+
+  function closeModal() {
+    isCreatingOpen = false
+    editingCombo = null
+    modalName = ''
+    modalModels = []
+    modalNameError = ''
+  }
+
+  function validateModalName(name: string): boolean {
+    if (!name.trim()) {
+      modalNameError = 'Name is required'
+      return false
+    }
+    if (!VALID_NAME_REGEX.test(name.trim())) {
+      modalNameError = 'Only letters, numbers, -, _ and . allowed'
+      return false
+    }
+    modalNameError = ''
+    return true
+  }
+
+  async function handleSaveCombo() {
+    if (!validateModalName(modalName)) return
+    isSavingCombo = true
+    try {
+      if (editingCombo) {
+        await api.updateCombo(editingCombo.id, {
+          name: modalName.trim(),
+          models: modalModels
+        })
+      } else {
+        await api.createCombo({
+          name: modalName.trim(),
+          models: modalModels,
+          strategy: 'fallback'
+        })
+      }
+      closeModal()
+      onRefresh()
+    } catch (e: any) {
+      modalNameError = e?.message || 'Failed to save combo'
+    } finally {
+      isSavingCombo = false
+    }
+  }
+
+  function confirmDeleteCombo(combo: Combo) {
+    deletingCombo = combo
+  }
+
+  async function handleDeleteCombo() {
+    if (!deletingCombo) return
+    try {
+      await api.deleteCombo(deletingCombo.id)
+      deletingCombo = null
+      onRefresh()
+    } catch (e) {
+      console.error('Failed to delete combo:', e)
+    }
+  }
+
+  // Model Picker Modal logic
+  function openModelPicker(target: 'combo' | 'vision' | 'audio' | 'judge') {
+    modelPickerTarget = target
+    modelPickerSearch = ''
+    customModelInput = ''
+    showModelPicker = true
+  }
+
+  function selectModel(modelValue: string) {
+    if (modelPickerTarget === 'combo') {
+      if (!modalModels.includes(modelValue)) {
+        modalModels = [...modalModels, modelValue]
+      }
+    } else if (modelPickerTarget === 'vision') {
+      if (!capacityAdapter.vision.models.includes(modelValue)) {
+        saveCapacityAdapter({
+          ...capacityAdapter,
+          vision: {
+            ...capacityAdapter.vision,
+            models: [...capacityAdapter.vision.models, modelValue]
+          }
+        })
+      }
+    } else if (modelPickerTarget === 'audio') {
+      if (!capacityAdapter.audioInput.models.includes(modelValue)) {
+        saveCapacityAdapter({
+          ...capacityAdapter,
+          audioInput: {
+            ...capacityAdapter.audioInput,
+            models: [...capacityAdapter.audioInput.models, modelValue]
+          }
+        })
+      }
+    } else if (modelPickerTarget === 'judge' && editingCombo) {
+      handleSetJudge(editingCombo.name, modelValue)
+    }
+    showModelPicker = false
+  }
+
+  // Available models aggregated from connections + providerNodes
+  let availableModels = $derived(() => {
+    const list: Array<{ value: string; label: string; provider: string; vision: boolean; reasoning: boolean }> = []
+    const seen = new Set<string>()
+
+    // Gather from providerNodes
+    for (const node of providerNodes) {
+      const p = node.id
+      if (node.models) {
+        for (const m of node.models) {
+          const val = `${p}/${m}`
+          if (!seen.has(val)) {
+            seen.add(val)
+            list.push({
+              value: val,
+              label: m,
+              provider: node.name || p,
+              vision: hasVision(m),
+              reasoning: hasReasoning(m)
+            })
+          }
+        }
+      }
+    }
+
+    // Also include common models from existing combos
+    for (const c of combos) {
+      const cms = getComboModels(c)
+      for (const m of cms) {
+        if (!seen.has(m)) {
+          seen.add(m)
+          const prov = m.includes('/') ? m.split('/')[0] : 'combo'
+          list.push({
+            value: m,
+            label: m.includes('/') ? m.split('/')[1] : m,
+            provider: prov,
+            vision: hasVision(m),
+            reasoning: hasReasoning(m)
+          })
+        }
+      }
+    }
+
+    return list
+  })
+
+  let filteredPickerModels = $derived(() => {
+    const all = availableModels()
+    return all.filter((item) => {
+      if (modelPickerTarget === 'vision' && !item.vision) {
+        // Soft filter: if vision target, prioritize vision, but allow if matches search
+        if (!modelPickerSearch.trim()) return item.vision
+      }
+      if (modelPickerSearch.trim()) {
+        const q = modelPickerSearch.toLowerCase()
+        return item.value.toLowerCase().includes(q) || item.provider.toLowerCase().includes(q)
       }
       return true
     })
-  )
+  })
 </script>
 
-<div class="space-y-6">
-  <!-- Page header -->
-  <div class="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
-    <div class="space-y-1.5 max-w-2xl">
-      <div class="flex items-center gap-2">
-        <span class="font-code text-[10px] uppercase tracking-wider text-brand-500 px-2 py-0.5 rounded bg-brand-500/10 border border-brand-500/25 font-bold">
-          Virtualization Layer
-        </span>
-        <span class="text-text-subtle">•</span>
-        <span class="font-code text-[11px] text-text-subtle">Cluster 9Router-East</span>
-      </div>
-      <h1 class="font-headline text-2xl sm:text-3xl font-bold text-text-main tracking-tight">
-        Model Combos & Intelligent Routing
-      </h1>
-      <p class="font-body text-xs sm:text-sm text-text-muted leading-relaxed">
-        Group multiple LLMs under unified virtual endpoints with automated failover, load balancing, or consensus fusion across multi-cloud credentials.
+<div class="flex min-w-0 flex-col gap-6 px-1 sm:px-0">
+  <!-- Header / Explainer (matches upstream Next.js exactly) -->
+  <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div class="min-w-0">
+      <p class="text-sm text-text-muted mt-1">
+        Group models under one name, then pick a strategy per combo:
       </p>
+      <ul class="text-sm text-text-muted mt-2 flex flex-col gap-1">
+        <li>
+          <span class="font-medium text-text-main">Fallback</span> — tries models in order (next on failure)
+        </li>
+        <li>
+          <span class="font-medium text-text-main">Round Robin</span> — rotates models across requests to spread load
+        </li>
+        <li>
+          <span class="font-medium text-text-main">Fusion</span> — queries all models in parallel, then a judge
+          synthesizes one answer. Best quality, but costs the most: every request bills all panel models + the judge
+          (N+1 calls)
+        </li>
+      </ul>
     </div>
+    <button
+      type="button"
+      onclick={openCreateModal}
+      class="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium shadow-sm transition-colors cursor-pointer w-full sm:w-auto shrink-0"
+    >
+      <Plus class="w-4 h-4" />
+      <span>Create Combo</span>
+    </button>
+  </div>
 
-    <!-- Quick Metrics Summary Pills -->
-    <div class="flex flex-wrap items-center gap-2">
-      <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface border border-border font-code text-xs">
-        <span class="text-text-muted">Active Endpoints:</span>
-        <span class="text-success font-bold">{combos.length} Online</span>
+  <!-- Combos List -->
+  {#if combos.length === 0}
+    <div class="rounded-xl border border-border bg-surface p-12 text-center">
+      <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-brand-500/10 text-brand-500 mb-4">
+        <Layers class="w-8 h-8" />
       </div>
-
-      <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface border border-border font-code text-xs">
-        <span class="text-text-muted">Failover Speed:</span>
-        <span class="text-info font-bold">&lt;48ms</span>
-      </div>
-
+      <p class="text-text-main font-medium mb-1">No combos yet</p>
+      <p class="text-sm text-text-muted mb-4">Create model combos with fallback support</p>
       <button
         type="button"
-        onclick={() => (isCreatingOpen = true)}
-        class="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 text-white font-body text-xs font-bold shadow-md shadow-brand-500/25 transition cursor-pointer"
+        onclick={openCreateModal}
+        class="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium transition cursor-pointer"
       >
         <Plus class="w-4 h-4" />
-        <span>Create New Combo</span>
+        <span>Create Combo</span>
       </button>
     </div>
-  </div>
+  {:else}
+    <div class="flex flex-col gap-3">
+      {#each combos as combo (combo.id)}
+        {@const modelsList = getComboModels(combo)}
+        {@const strategyInfo = comboStrategies[combo.name] || {}}
+        {@const currentStrategy = strategyInfo.fallbackStrategy || combo.strategy || 'fallback'}
+        {@const judgeModel = strategyInfo.judgeModel || ''}
+        {@const isFusion = currentStrategy === 'fusion'}
 
-  <!-- Strategy Blueprint Cards (Stitch Design) -->
-  <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-    <!-- Fallback Chain -->
-    <div class="p-4 rounded-xl bg-surface border border-border space-y-2">
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <div class="p-1.5 rounded-lg bg-brand-500/15 text-brand-500">
-            <GitBranch class="w-4 h-4" />
-          </div>
-          <span class="font-headline text-xs font-bold text-text-main">Fallback Chain</span>
-        </div>
-        <span class="font-code text-[10px] text-brand-500 bg-brand-500/10 px-2 py-0.5 rounded-full border border-brand-500/20 font-semibold">
-          Default
-        </span>
-      </div>
-      <p class="font-body text-[11px] text-text-muted leading-relaxed">
-        Queries models sequentially. If primary model returns 429, 5xx, or timeouts, seamlessly switches downstream without socket drops.
-      </p>
-      <div class="font-code text-[10px] text-text-subtle flex items-center gap-1.5 pt-1">
-        <span class="w-1.5 h-1.5 rounded-full bg-brand-500"></span>
-        <span>Policy: Next-on-failure</span>
-      </div>
-    </div>
-
-    <!-- Round Robin -->
-    <div class="p-4 rounded-xl bg-surface border border-border space-y-2">
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <div class="p-1.5 rounded-lg bg-info/15 text-info">
-            <RefreshCw class="w-4 h-4" />
-          </div>
-          <span class="font-headline text-xs font-bold text-text-main">Round Robin</span>
-        </div>
-        <span class="font-code text-[10px] text-info bg-info/10 px-2 py-0.5 rounded-full border border-info/20 font-semibold">
-          Load Spread
-        </span>
-      </div>
-      <p class="font-body text-[11px] text-text-muted leading-relaxed">
-        Rotates requests across candidate keys and regional instances to maximize TPM quotas and minimize rate-limit throttling.
-      </p>
-      <div class="font-code text-[10px] text-text-subtle flex items-center gap-1.5 pt-1">
-        <span class="w-1.5 h-1.5 rounded-full bg-info"></span>
-        <span>Policy: Weighted distribution</span>
-      </div>
-    </div>
-
-    <!-- Consensus Fusion -->
-    <div class="p-4 rounded-xl bg-surface border border-border space-y-2">
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <div class="p-1.5 rounded-lg bg-success/15 text-success">
-            <Zap class="w-4 h-4" />
-          </div>
-          <span class="font-headline text-xs font-bold text-text-main">Consensus Fusion</span>
-        </div>
-        <span class="font-code text-[10px] text-success bg-success/10 px-2 py-0.5 rounded-full border border-success/20 font-semibold">
-          Max Quality
-        </span>
-      </div>
-      <p class="font-body text-[11px] text-text-muted leading-relaxed">
-        Queries parallel LLM nodes simultaneously, using fast-evaluator judge to select or synthesize the most coherent response.
-      </p>
-      <div class="font-code text-[10px] text-text-subtle flex items-center gap-1.5 pt-1">
-        <span class="w-1.5 h-1.5 rounded-full bg-success"></span>
-        <span>Policy: Parallel Judge (N+1)</span>
-      </div>
-    </div>
-  </div>
-
-  <!-- Filter & Realtime Query Toolbar (Stitch Screenshot) -->
-  <div class="flex flex-col sm:flex-row items-center justify-between gap-3 p-2 rounded-xl bg-surface border border-border">
-    <div class="relative w-full sm:w-80 flex items-center">
-      <Search class="absolute left-3 w-4 h-4 text-text-subtle pointer-events-none" />
-      <input
-        type="text"
-        bind:value={searchFilter}
-        placeholder="Filter combos by alias, tag, or backing provider..."
-        class="w-full bg-surface-2 border border-border rounded-lg pl-9 pr-3 py-1.5 font-body text-xs text-text-main placeholder:text-text-subtle focus:outline-none focus:border-brand-500 transition"
-      />
-    </div>
-
-    <div class="flex items-center gap-2">
-      <div class="flex items-center gap-1.5 text-xs font-code text-text-muted">
-        <span>Strategy:</span>
-        <select
-          bind:value={strategyFilter}
-          class="bg-surface-2 border border-border rounded px-2.5 py-1 text-xs text-text-main focus:outline-none"
+        <div
+          class="group rounded-xl border border-border bg-surface hover:border-brand-500/30 p-3.5 transition-all shadow-xs"
         >
-          <option value="ALL">All Strategies ({combos.length})</option>
-          <option value="fallback">Fallback Only</option>
-          <option value="round-robin">Round Robin Only</option>
-        </select>
-      </div>
-    </div>
-  </div>
-
-  <!-- Combo Rows List & Pipeline Visualization (Stitch Design) -->
-  <div class="space-y-3">
-    {#each filteredCombos as c (c.id)}
-      {@const isSelected = c.id === selectedComboId}
-      {@const parsedModels = (() => {
-        try {
-          const parsed = JSON.parse(c.models)
-          return Array.isArray(parsed) ? parsed : [c.models]
-        } catch {
-          return c.models ? [c.models] : []
-        }
-      })()}
-
-      <div
-        class="rounded-xl border transition-all overflow-hidden {isSelected
-          ? 'bg-surface-2 border-brand-500/50 shadow-lg shadow-brand-500/10'
-          : 'bg-surface border-border hover:border-border'}"
-      >
-        <!-- Combo Row Header -->
-        <div class="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <div class="flex items-center gap-3">
-            <div class="w-8 h-8 rounded-lg bg-bg border border-border flex items-center justify-center text-brand-500">
-              <Layers class="w-4 h-4" />
-            </div>
-
-            <div>
-              <div class="flex items-center gap-2">
-                <span class="font-headline text-sm font-bold text-text-main">{c.name}</span>
-                <span class="font-code text-[10px] px-2 py-0.5 rounded bg-brand-500/15 text-brand-400 font-bold border border-brand-500/25">
-                  model: "{c.name}"
-                </span>
-                <span class="font-code text-[10px] text-success bg-success/10 px-2 py-0.5 rounded border border-success/20">
-                  99.8% uptime
-                </span>
+          <div class="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <!-- Left: Icon, Name, Model Badges & Fusion Judge -->
+            <div class="flex min-w-0 flex-1 items-start gap-3 sm:items-center">
+              <div class="size-8 rounded-lg bg-brand-500/10 flex items-center justify-center shrink-0">
+                <Layers class="w-4 h-4 text-brand-500" />
               </div>
-              <div class="text-[11px] text-text-muted font-code pt-0.5">
-                0 failover drops • Virtual Gateway Endpoint
-              </div>
-            </div>
-          </div>
-
-          <!-- Pipeline Flow Preview -->
-          <div class="flex items-center gap-2 overflow-x-auto py-1">
-            <span class="font-code text-[10px] text-text-subtle uppercase font-bold">Pipeline:</span>
-            {#if parsedModels.length > 0}
-              {#each parsedModels as m, idx}
-                <div class="flex items-center gap-1.5 font-code text-xs">
-                  <span class="px-2 py-0.5 rounded bg-bg border border-border text-text-main">
-                    <strong class="text-brand-500">{idx + 1}</strong> {m}
-                  </span>
-                  {#if idx < parsedModels.length - 1}
-                    <ArrowRight class="w-3 h-3 text-text-subtle" />
+              <div class="min-w-0 flex-1">
+                <code class="block truncate font-mono text-sm font-medium text-text-main">{combo.name}</code>
+                <div class="mt-1 flex min-w-0 flex-wrap items-center gap-1">
+                  {#if modelsList.length === 0}
+                    <span class="text-xs text-text-muted italic">No models</span>
+                  {:else}
+                    {#each modelsList.slice(0, 3) as model}
+                      <code
+                        class="inline-flex items-center gap-1 rounded bg-black/5 dark:bg-white/5 px-1.5 py-0.5 font-mono text-xs text-text-muted"
+                      >
+                        <span>{model}</span>
+                        {#if hasVision(model)}
+                          <Eye class="w-3 h-3 text-blue-500 shrink-0" title="Vision — Supports image input" />
+                        {/if}
+                        {#if hasReasoning(model)}
+                          <Sparkles class="w-3 h-3 text-amber-500 shrink-0" title="Reasoning — Supports reasoning / thinking" />
+                        {/if}
+                      </code>
+                    {/each}
+                    {#if modelsList.length > 3}
+                      <span class="text-[10px] text-text-muted">+{modelsList.length - 3} more</span>
+                    {/if}
                   {/if}
                 </div>
-              {/each}
-            {:else}
-              <span class="text-xs text-text-subtle italic">No upstream models assigned yet</span>
-            {/if}
-          </div>
 
-          <!-- Right Actions -->
-          <div class="flex items-center gap-2 self-end md:self-auto">
-            <span class="font-code text-[10px] px-2 py-1 rounded bg-bg text-info border border-border capitalize">
-              {c.strategy === 'round-robin' ? 'Round Robin - spread load' : 'Fallback - try in order'}
-            </span>
-
-            <button
-              type="button"
-              onclick={() => copyAlias(c.name)}
-              class="p-1.5 rounded-lg text-text-muted hover:text-text-main bg-bg border border-border cursor-pointer"
-              title="Copy Model Name"
-            >
-              {#if copiedName === c.name}
-                <Check class="w-3.5 h-3.5 text-success" />
-              {:else}
-                <Copy class="w-3.5 h-3.5" />
-              {/if}
-            </button>
-
-            <button
-              type="button"
-              onclick={() => (selectedComboId = isSelected ? null : c.id)}
-              class="px-3 py-1 rounded-lg text-xs font-semibold cursor-pointer transition {isSelected
-                ? 'text-text-main'
-                : 'bg-surface-3 hover:bg-surface-3 text-text-main'}"
-            >
-              {isSelected ? 'Close Editor' : 'Edit Pipeline'}
-            </button>
-          </div>
-        </div>
-
-        <!-- Expanded Pipeline Editor & Live Test (If Selected) -->
-        {#if isSelected}
-          <div class="p-5 border-t border-border bg-surface-2 space-y-5">
-            <!-- Pipeline Reorder Sequence -->
-            <div class="space-y-3">
-              <div class="flex items-center justify-between">
-                <div class="font-body text-xs font-semibold text-text-main">
-                  Model Priority Pipeline (Top-to-Bottom Execution)
-                </div>
-                <div class="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onclick={() => handleDeleteCombo(c.id)}
-                    class="text-xs text-hover:text-danger hover:underline cursor-pointer"
-                  >
-                    Delete Combo
-                  </button>
-                  <button
-                    type="button"
-                    onclick={handleSaveCombo}
-                    disabled={isSaving}
-                    class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-success hover:brightness-110 text-black font-bold text-xs shadow-md transition cursor-pointer"
-                  >
-                    {#if isSaving}
-                      <Loader2 class="w-3.5 h-3.5 animate-spin" />
-                    {:else}
-                      <Save class="w-3.5 h-3.5" />
+                <!-- Fusion: judge picker (Auto = first model) -->
+                {#if isFusion}
+                  <div class="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
+                    <span class="text-[11px] font-medium text-text-muted">Judge</span>
+                    <button
+                      type="button"
+                      onclick={() => {
+                        editingCombo = combo
+                        openModelPicker('judge')
+                      }}
+                      class="inline-flex max-w-full items-center gap-1 rounded border border-dashed border-brand-500/40 px-1.5 py-0.5 font-mono text-[11px] text-brand-500 hover:border-brand-500 hover:bg-brand-500/5 transition-colors cursor-pointer"
+                      title="Pick the model that fuses panel answers"
+                    >
+                      <Gavel class="w-3 h-3" />
+                      <span class="truncate">{judgeModel || `Auto — ${modelsList[0] || 'first model'}`}</span>
+                    </button>
+                    {#if judgeModel}
+                      <button
+                        type="button"
+                        onclick={() => clearJudge(combo.name)}
+                        class="p-0.5 rounded text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors cursor-pointer"
+                        title="Reset judge to Auto"
+                      >
+                        <X class="w-3 h-3" />
+                      </button>
                     {/if}
-                    <span>Save Pipeline Changes</span>
-                  </button>
-                </div>
-              </div>
-
-              <div class="space-y-2">
-                {#each editingModels as model, idx}
-                  <div class="flex items-center justify-between p-3 rounded-lg bg-surface border border-border">
-                    <div class="flex items-center gap-3">
-                      <span class="w-6 h-6 rounded bg-surface-2 text-text-main flex items-center justify-center font-bold text-xs font-code">
-                        {idx + 1}
-                      </span>
-                      <span class="font-code text-xs text-text-main">{model}</span>
-                    </div>
-
-                    <div class="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onclick={() => handleMoveModel(idx, -1)}
-                        disabled={idx === 0}
-                        class="p-1 rounded text-text-muted hover:text-text-main disabled:opacity-30 cursor-pointer"
-                        title="Move Up"
-                      >
-                        <ArrowUp class="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onclick={() => handleMoveModel(idx, 1)}
-                        disabled={idx === editingModels.length - 1}
-                        class="p-1 rounded text-text-muted hover:text-text-main disabled:opacity-30 cursor-pointer"
-                        title="Move Down"
-                      >
-                        <ArrowDown class="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onclick={() => handleRemoveModel(idx)}
-                        class="p-1 rounded text-text-muted hover:text-hover:text-danger ml-2 cursor-pointer"
-                        title="Remove"
-                      >
-                        <Trash2 class="w-3.5 h-3.5" />
-                      </button>
-                    </div>
                   </div>
-                {/each}
-              </div>
-
-              <!-- Add model input -->
-              <div class="flex gap-2 pt-1">
-                <input
-                  type="text"
-                  placeholder="Enter model string (e.g. fb/z-ai/glm-5.3-flash, ag/gemini-2.5-flash-high, deepseek-chat)"
-                  bind:value={modelInput}
-                  onkeydown={(e) => e.key === 'Enter' && handleAddModel()}
-                  class="flex-1 px-3 py-2 rounded-lg bg-surface border border-border font-code text-xs text-text-main focus:outline-none focus:border-brand-500"
-                />
-                <button
-                  type="button"
-                  onclick={handleAddModel}
-                  class="px-4 py-2 rounded-lg bg-surface-3 hover:bg-surface-3 text-text-main font-body text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
-                >
-                  <Plus class="w-3.5 h-3.5" />
-                  <span>Add Upstream Model</span>
-                </button>
-              </div>
-            </div>
-
-            <!-- Live Test Playground (Stitch Style) -->
-            <div class="pt-4 border-t border-border space-y-3">
-              <div class="flex items-center justify-between">
-                <div class="font-headline text-xs font-bold text-text-main flex items-center gap-2">
-                  <Play class="w-3.5 h-3.5 text-success" />
-                  <span>Live Test Playground: Testing "{c.name}"</span>
-                </div>
-                {#if testLatency !== null}
-                  <span class="font-code text-[11px] text-success">RTT Latency: {testLatency}ms</span>
                 {/if}
               </div>
+            </div>
 
-              <div class="flex gap-2">
-                <input
-                  type="text"
-                  bind:value={testPrompt}
-                  placeholder="Test prompt..."
-                  class="flex-1 px-3 py-2 rounded-lg bg-surface border border-border font-body text-xs text-text-main focus:outline-none focus:border-brand-500"
-                />
-                <button
-                  type="button"
-                  onclick={handleRunLiveTest}
-                  disabled={isTesting}
-                  class="px-4 py-2 rounded-lg text-text-main font-body text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+            <!-- Actions: Strategy selector + Copy/Edit/Delete -->
+            <div class="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-3 sm:shrink-0">
+              <!-- Strategy dropdown -->
+              <div class="w-full sm:w-[190px]">
+                <select
+                  value={currentStrategy}
+                  onchange={(e) => handleSetStrategy(combo, e.currentTarget.value)}
+                  class="w-full bg-surface-2 border border-border rounded-lg px-2.5 py-1.5 text-xs text-text-main focus:outline-none focus:border-brand-500 cursor-pointer font-body"
                 >
-                  {#if isTesting}
-                    <Loader2 class="w-3.5 h-3.5 animate-spin" />
-                  {:else}
-                    <Play class="w-3.5 h-3.5" />
-                  {/if}
-                  <span>Run Live Test</span>
-                </button>
+                  <option value="fallback">Fallback — try in order</option>
+                  <option value="round-robin">Round Robin — rotate</option>
+                  <option value="fusion">Fusion — panel + judge</option>
+                </select>
               </div>
 
-              {#if testOutput}
-                <div class="p-3.5 rounded-lg bg-bg border border-border font-code text-xs text-success whitespace-pre-wrap max-h-48 overflow-y-auto">
-                  {testOutput}
-                </div>
-              {/if}
+              <!-- Icon buttons with labels matching upstream -->
+              <div class="grid grid-cols-3 gap-1 sm:flex sm:items-center">
+                <button
+                  type="button"
+                  onclick={() => copyName(combo.name, combo.id)}
+                  class="flex flex-col items-center justify-center rounded px-2.5 py-1 text-text-muted transition-colors hover:bg-black/5 dark:hover:bg-white/5 hover:text-brand-500 cursor-pointer"
+                  title="Copy combo name"
+                >
+                  {#if copiedId === combo.id}
+                    <Check class="w-4 h-4 text-success" />
+                    <span class="text-[10px] leading-tight text-success font-medium">Copied</span>
+                  {:else}
+                    <Copy class="w-4 h-4" />
+                    <span class="text-[10px] leading-tight">Copy</span>
+                  {/if}
+                </button>
+
+                <button
+                  type="button"
+                  onclick={() => openEditModal(combo)}
+                  class="flex flex-col items-center justify-center rounded px-2.5 py-1 text-text-muted transition-colors hover:bg-black/5 dark:hover:bg-white/5 hover:text-brand-500 cursor-pointer"
+                  title="Edit"
+                >
+                  <Pencil class="w-4 h-4" />
+                  <span class="text-[10px] leading-tight">Edit</span>
+                </button>
+
+                <button
+                  type="button"
+                  onclick={() => confirmDeleteCombo(combo)}
+                  class="flex flex-col items-center justify-center rounded px-2.5 py-1 text-red-500 transition-colors hover:bg-red-500/10 cursor-pointer"
+                  title="Delete"
+                >
+                  <Trash2 class="w-4 h-4" />
+                  <span class="text-[10px] leading-tight">Delete</span>
+                </button>
+              </div>
             </div>
           </div>
-        {/if}
-      </div>
-    {/each}
-  </div>
-
-  <!-- Modality Switch Adapters (From Stitch Screenshot) -->
-  <div class="p-5 rounded-xl bg-surface border border-border space-y-3">
-    <div class="space-y-0.5">
-      <h3 class="font-headline text-sm font-bold text-text-main flex items-center gap-2">
-        <Cpu class="w-4 h-4 text-info" />
-        <span>Modality Switch Adapters</span>
-      </h3>
-      <p class="font-body text-xs text-text-muted">
-        If your request carries image, audio, or binary attachments and the designated model cannot parse them, 9Router will intelligently intercept and swap downstream models on the fly.
-      </p>
-    </div>
-
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
-      <!-- Vision Adapter -->
-      <div class="p-3.5 rounded-lg bg-surface-2 border border-border flex items-center justify-between">
-        <div class="flex items-center gap-3">
-          <div class="p-2 rounded-lg bg-info/15 text-info">
-            <Eye class="w-4 h-4" />
-          </div>
-          <div>
-            <div class="flex items-center gap-2">
-              <span class="font-headline text-xs font-bold text-text-main">VisionAdapter</span>
-              <span class="font-code text-[9px] px-1.5 py-0.2 rounded bg-success/15 text-success font-semibold">Active</span>
-            </div>
-            <div class="font-body text-[11px] text-text-muted">Intercepts PNG, JPG, WEBP, and PDF frames</div>
-            <div class="font-code text-[10px] text-info pt-0.5">Swaps to: ag/gemini-2.5-flash-high</div>
-          </div>
         </div>
-
-        <div class="w-2 h-2 rounded-full bg-success animate-pulse"></div>
-      </div>
-
-      <!-- Audio Adapter -->
-      <div class="p-3.5 rounded-lg bg-surface-2 border border-border flex items-center justify-between">
-        <div class="flex items-center gap-3">
-          <div class="p-2 rounded-lg bg-brand-500/15 text-brand-500">
-            <Mic class="w-4 h-4" />
-          </div>
-          <div>
-            <div class="flex items-center gap-2">
-              <span class="font-headline text-xs font-bold text-text-main">AudioInputAdapter</span>
-              <span class="font-code text-[9px] px-1.5 py-0.2 rounded bg-brand-400/15 text-brand-400 font-semibold">Standby</span>
-            </div>
-            <div class="font-body text-[11px] text-text-muted">Intercepts MP3, WAV, FLAC streams</div>
-            <div class="font-code text-[10px] text-brand-400 pt-0.5">Swaps to: openai/whisper-large-v3-turbo</div>
-          </div>
-        </div>
-
-        <div class="w-2 h-2 rounded-full bg-[#ff8469]"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Create Modal (Stitch Mac-Style) -->
-  {#if isCreatingOpen}
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
-      <div class="w-full max-w-md p-6 rounded-2xl bg-surface-2 border border-border shadow-2xl space-y-4">
-        <div class="flex items-center justify-between pb-2 border-b border-border">
-          <div class="flex items-center gap-2">
-            <button
-              type="button"
-              aria-label="Close dialog"
-              onclick={() => (isCreatingOpen = false)}
-              class="w-3 h-3 rounded-full bg-[#ff5f56] cursor-pointer"
-            ></button>
-            <div class="w-3 h-3 rounded-full bg-[#ffbd2e]"></div>
-            <div class="w-3 h-3 rounded-full bg-[#27c93f]"></div>
-            <span class="ml-2 font-headline text-sm font-bold text-text-main">
-              Create Virtual Model Combo
-            </span>
-          </div>
-        </div>
-
-        <form onsubmit={handleCreateCombo} class="space-y-3 font-body text-xs">
-          <div>
-            <label for="create-combo-name" class="block font-semibold text-text-muted mb-1">Combo Name *</label>
-            <input
-              id="create-combo-name"
-              type="text"
-              placeholder="e.g. smart-combo, code-fast"
-              bind:value={newComboName}
-              required
-              class="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 font-code text-xs text-text-main focus:outline-none focus:border-brand-500"
-            />
-          </div>
-
-          <div>
-            <label for="create-strategy-select" class="block font-semibold text-text-muted mb-1">Routing Strategy</label>
-            <select
-              id="create-strategy-select"
-              bind:value={newComboStrategy}
-              class="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 font-code text-xs text-text-main focus:outline-none focus:border-brand-500"
-            >
-              <option value="fallback">Sequential Fallback (Recommended)</option>
-              <option value="round-robin">Round Robin - Load Spread</option>
-            </select>
-          </div>
-
-          <div class="flex justify-end gap-2 pt-3 border-t border-border">
-            <button
-              type="button"
-              onclick={() => (isCreatingOpen = false)}
-              class="px-4 py-2 rounded-lg text-text-muted hover:text-text-main cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSaving}
-              class="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 text-white font-bold shadow-md shadow-brand-500/25 cursor-pointer"
-            >
-              <Check class="w-3.5 h-3.5" />
-              <span>Create Combo</span>
-            </button>
-          </div>
-        </form>
-      </div>
+      {/each}
     </div>
   {/if}
+
+  <!-- Vision Adapter Section (Capacity Adapter) -->
+  <div class="flex flex-col gap-3 pt-2">
+    <div class="flex flex-col gap-1">
+      <h3 class="text-sm font-medium text-text-main">Vision Adapter</h3>
+      <p class="text-xs text-text-muted">
+        Your model can't read image/audio? Auto-switches to a model in the pool below.
+      </p>
+      <ul class="text-[11px] text-text-muted flex flex-col gap-0.5 mt-0.5">
+        <li><span class="font-medium text-text-main">Vision</span> — images (png, jpg, webp, …)</li>
+        <li><span class="font-medium text-text-main">Audio</span> — audio input</li>
+      </ul>
+    </div>
+
+    <div class="flex flex-col gap-3">
+      <!-- Vision Adapter Card -->
+      <div
+        class="group rounded-xl border border-border bg-surface p-3.5 transition-all shadow-xs {!capacityAdapter.vision
+          .enabled
+          ? 'opacity-50'
+          : ''}"
+      >
+        <div class="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div class="flex min-w-0 flex-1 items-start gap-3 sm:items-center">
+            <!-- Toggle switch -->
+            <Toggle
+              checked={capacityAdapter.vision.enabled}
+              onChange={(v) => toggleAdapter('vision', v)}
+            />
+
+            <!-- Icon -->
+            <div class="size-8 rounded-lg bg-brand-500/10 flex items-center justify-center shrink-0">
+              <Eye class="w-4 h-4 text-brand-500" />
+            </div>
+
+            <!-- Text & Model Chips -->
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-1.5">
+                <code class="font-mono text-sm font-medium text-text-main">Vision</code>
+                <span class="text-[10px] text-text-muted">— Images</span>
+              </div>
+              <div class="mt-1 flex min-w-0 flex-wrap items-center gap-1">
+                {#if capacityAdapter.vision.models.length === 0}
+                  <span class="text-xs text-text-muted italic">No models</span>
+                {:else}
+                  {#each capacityAdapter.vision.models.slice(0, 4) as model, idx}
+                    <code
+                      class="group/chip inline-flex items-center gap-1 rounded bg-black/5 dark:bg-white/5 px-1.5 py-0.5 font-mono text-xs text-text-muted"
+                    >
+                      <span>{model}</span>
+                      <Eye class="w-3 h-3 text-blue-500 shrink-0" title="Vision — Supports image input" />
+                      <button
+                        type="button"
+                        onclick={() => moveAdapterModel('vision', idx, -1)}
+                        disabled={idx === 0}
+                        class="leading-none opacity-0 group-hover/chip:opacity-100 {idx === 0
+                          ? 'text-text-muted/20 cursor-not-allowed'
+                          : 'text-text-muted hover:text-brand-500'} cursor-pointer"
+                        title="Move up"
+                      >
+                        <ArrowUp class="w-3 h-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onclick={() => moveAdapterModel('vision', idx, 1)}
+                        disabled={idx === capacityAdapter.vision.models.length - 1}
+                        class="leading-none opacity-0 group-hover/chip:opacity-100 {idx ===
+                        capacityAdapter.vision.models.length - 1
+                          ? 'text-text-muted/20 cursor-not-allowed'
+                          : 'text-text-muted hover:text-brand-500'} cursor-pointer"
+                        title="Move down"
+                      >
+                        <ArrowDown class="w-3 h-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onclick={() => removeAdapterModel('vision', idx)}
+                        class="leading-none opacity-0 group-hover/chip:opacity-100 text-text-muted hover:text-red-500 cursor-pointer"
+                        title="Remove model"
+                      >
+                        <X class="w-3 h-3" />
+                      </button>
+                    </code>
+                  {/each}
+                  {#if capacityAdapter.vision.models.length > 4}
+                    <span class="text-[10px] text-text-muted">+{capacityAdapter.vision.models.length - 4} more</span>
+                  {/if}
+                {/if}
+              </div>
+            </div>
+          </div>
+
+          <!-- Actions: Round-robin toggle + Add Model -->
+          <div class="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-3 sm:shrink-0">
+            <label class="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer select-none">
+              <Toggle
+                checked={capacityAdapter.vision.roundRobin}
+                disabled={!capacityAdapter.vision.enabled}
+                onChange={(v) => toggleAdapterRoundRobin('vision', v)}
+              />
+              <span>Round</span>
+            </label>
+            <button
+              type="button"
+              onclick={() => openModelPicker('vision')}
+              disabled={!capacityAdapter.vision.enabled}
+              class="inline-flex items-center justify-center gap-1 px-2.5 py-1 text-xs font-medium text-brand-500 hover:bg-brand-500/10 rounded-lg transition-colors cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
+            >
+              <Plus class="w-3.5 h-3.5" />
+              <span>Add Model</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Audio Adapter Card -->
+      <div
+        class="group rounded-xl border border-border bg-surface p-3.5 transition-all shadow-xs {!capacityAdapter
+          .audioInput.enabled
+          ? 'opacity-50'
+          : ''}"
+      >
+        <div class="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div class="flex min-w-0 flex-1 items-start gap-3 sm:items-center">
+            <!-- Toggle switch -->
+            <Toggle
+              checked={capacityAdapter.audioInput.enabled}
+              onChange={(v) => toggleAdapter('audioInput', v)}
+            />
+
+            <!-- Icon -->
+            <div class="size-8 rounded-lg bg-brand-500/10 flex items-center justify-center shrink-0">
+              <Headphones class="w-4 h-4 text-brand-500" />
+            </div>
+
+            <!-- Text & Model Chips -->
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-1.5">
+                <code class="font-mono text-sm font-medium text-text-main">Audio</code>
+                <span class="text-[10px] text-text-muted">— Audio input</span>
+              </div>
+              <div class="mt-1 flex min-w-0 flex-wrap items-center gap-1">
+                {#if capacityAdapter.audioInput.models.length === 0}
+                  <span class="text-xs text-text-muted italic">No models</span>
+                {:else}
+                  {#each capacityAdapter.audioInput.models.slice(0, 4) as model, idx}
+                    <code
+                      class="group/chip inline-flex items-center gap-1 rounded bg-black/5 dark:bg-white/5 px-1.5 py-0.5 font-mono text-xs text-text-muted"
+                    >
+                      <span>{model}</span>
+                      <button
+                        type="button"
+                        onclick={() => moveAdapterModel('audioInput', idx, -1)}
+                        disabled={idx === 0}
+                        class="leading-none opacity-0 group-hover/chip:opacity-100 {idx === 0
+                          ? 'text-text-muted/20 cursor-not-allowed'
+                          : 'text-text-muted hover:text-brand-500'} cursor-pointer"
+                        title="Move up"
+                      >
+                        <ArrowUp class="w-3 h-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onclick={() => moveAdapterModel('audioInput', idx, 1)}
+                        disabled={idx === capacityAdapter.audioInput.models.length - 1}
+                        class="leading-none opacity-0 group-hover/chip:opacity-100 {idx ===
+                        capacityAdapter.audioInput.models.length - 1
+                          ? 'text-text-muted/20 cursor-not-allowed'
+                          : 'text-text-muted hover:text-brand-500'} cursor-pointer"
+                        title="Move down"
+                      >
+                        <ArrowDown class="w-3 h-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onclick={() => removeAdapterModel('audioInput', idx)}
+                        class="leading-none opacity-0 group-hover/chip:opacity-100 text-text-muted hover:text-red-500 cursor-pointer"
+                        title="Remove model"
+                      >
+                        <X class="w-3 h-3" />
+                      </button>
+                    </code>
+                  {/each}
+                  {#if capacityAdapter.audioInput.models.length > 4}
+                    <span class="text-[10px] text-text-muted">+{capacityAdapter.audioInput.models.length - 4} more</span>
+                  {/if}
+                {/if}
+              </div>
+            </div>
+          </div>
+
+          <!-- Actions: Round-robin toggle + Add Model -->
+          <div class="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-3 sm:shrink-0">
+            <label class="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer select-none">
+              <Toggle
+                checked={capacityAdapter.audioInput.roundRobin}
+                disabled={!capacityAdapter.audioInput.enabled}
+                onChange={(v) => toggleAdapterRoundRobin('audioInput', v)}
+              />
+              <span>Round</span>
+            </label>
+            <button
+              type="button"
+              onclick={() => openModelPicker('audio')}
+              disabled={!capacityAdapter.audioInput.enabled}
+              class="inline-flex items-center justify-center gap-1 px-2.5 py-1 text-xs font-medium text-brand-500 hover:bg-brand-500/10 rounded-lg transition-colors cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
+            >
+              <Plus class="w-3.5 h-3.5" />
+              <span>Add Model</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
+
+<!-- Create / Edit Combo Modal -->
+{#if isCreatingOpen}
+  <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+    <div
+      class="bg-surface border border-border rounded-xl shadow-2xl max-w-lg w-full overflow-hidden flex flex-col max-h-[90vh]"
+    >
+      <div class="px-5 py-4 border-b border-border flex items-center justify-between">
+        <h2 class="text-sm font-semibold text-text-main">
+          {editingCombo ? 'Edit Combo' : 'Create Combo'}
+        </h2>
+        <button type="button" onclick={closeModal} class="text-text-muted hover:text-text-main cursor-pointer">
+          <X class="w-4 h-4" />
+        </button>
+      </div>
+
+      <div class="p-5 overflow-y-auto space-y-4 flex-1">
+        <!-- Combo Name -->
+        <div>
+          <label for="comboName" class="text-xs font-medium text-text-main block mb-1">Combo Name</label>
+          <input
+            id="comboName"
+            type="text"
+            bind:value={modalName}
+            oninput={() => validateModalName(modalName)}
+            placeholder="my-combo"
+            class="w-full bg-surface-2 border {modalNameError
+              ? 'border-red-500'
+              : 'border-border'} rounded-lg px-3 py-2 text-xs text-text-main font-mono focus:outline-none focus:border-brand-500"
+          />
+          {#if modalNameError}
+            <p class="text-[10px] text-red-500 mt-1">{modalNameError}</p>
+          {:else}
+            <p class="text-[10px] text-text-muted mt-0.5">Only letters, numbers, -, _ and . allowed</p>
+          {/if}
+        </div>
+
+        <!-- Models -->
+        <div>
+          <div class="flex items-center justify-between mb-1.5">
+            <span class="text-xs font-medium text-text-main">Models ({modalModels.length})</span>
+          </div>
+
+          {#if modalModels.length === 0}
+            <div
+              class="text-center py-6 border border-dashed border-border rounded-lg bg-black/[0.01] dark:bg-white/[0.01]"
+            >
+              <Layers class="w-6 h-6 text-text-muted mx-auto mb-1 opacity-50" />
+              <p class="text-xs text-text-muted">No models added yet</p>
+            </div>
+          {:else}
+            <div class="flex flex-col gap-1.5 max-h-[220px] overflow-y-auto pr-1">
+              {#each modalModels as model, idx}
+                <div
+                  class="group flex min-w-0 items-center gap-2 rounded-lg px-2.5 py-1.5 bg-surface-2 border border-border/70 hover:border-brand-500/40 transition-colors"
+                >
+                  <GripVertical class="w-3.5 h-3.5 text-text-muted cursor-grab shrink-0" />
+                  <span class="text-[10px] font-medium text-text-muted w-3 text-center shrink-0">{idx + 1}</span>
+                  <div class="min-w-0 flex-1 truncate font-mono text-xs text-text-main">
+                    {model}
+                  </div>
+                  <div class="flex items-center gap-0.5 shrink-0">
+                    <button
+                      type="button"
+                      disabled={idx === 0}
+                      onclick={() => {
+                        const arr = [...modalModels]
+                        const t = arr[idx]
+                        arr[idx] = arr[idx - 1]
+                        arr[idx - 1] = t
+                        modalModels = arr
+                      }}
+                      class="p-1 rounded text-text-muted hover:text-brand-500 hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-20 cursor-pointer"
+                      title="Move up"
+                    >
+                      <ArrowUp class="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={idx === modalModels.length - 1}
+                      onclick={() => {
+                        const arr = [...modalModels]
+                        const t = arr[idx]
+                        arr[idx] = arr[idx + 1]
+                        arr[idx + 1] = t
+                        modalModels = arr
+                      }}
+                      class="p-1 rounded text-text-muted hover:text-brand-500 hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-20 cursor-pointer"
+                      title="Move down"
+                    >
+                      <ArrowDown class="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onclick={() => {
+                        modalModels = modalModels.filter((_, i) => i !== idx)
+                      }}
+                      class="p-1 rounded text-text-muted hover:text-red-500 hover:bg-red-500/10 cursor-pointer"
+                      title="Remove"
+                    >
+                      <X class="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {/if}
+
+          <!-- Add Model button -->
+          <button
+            type="button"
+            onclick={() => openModelPicker('combo')}
+            class="w-full mt-2 py-2 border border-dashed border-border hover:border-brand-500/50 rounded-lg text-xs text-brand-500 font-medium hover:bg-brand-500/5 transition-colors flex items-center justify-center gap-1 cursor-pointer"
+          >
+            <Plus class="w-4 h-4" />
+            <span>Add Model</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="px-5 py-3 border-t border-border flex items-center justify-end gap-2 bg-surface-2/50">
+        <button
+          type="button"
+          onclick={closeModal}
+          class="px-3.5 py-1.5 text-xs text-text-muted hover:text-text-main font-medium rounded-lg cursor-pointer transition"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onclick={handleSaveCombo}
+          disabled={!modalName.trim() || !!modalNameError || isSavingCombo}
+          class="px-4 py-1.5 text-xs bg-brand-500 hover:bg-brand-600 text-white font-medium rounded-lg shadow-sm transition disabled:opacity-50 disabled:pointer-events-none cursor-pointer flex items-center gap-1.5"
+        >
+          {#if isSavingCombo}
+            <Loader2 class="w-3.5 h-3.5 animate-spin" />
+          {/if}
+          <span>{editingCombo ? 'Save' : 'Create'}</span>
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Model Selector Modal -->
+{#if showModelPicker}
+  <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+    <div
+      class="bg-surface border border-border rounded-xl shadow-2xl max-w-md w-full overflow-hidden flex flex-col max-h-[85vh]"
+    >
+      <div class="px-5 py-4 border-b border-border flex items-center justify-between">
+        <h2 class="text-sm font-semibold text-text-main">
+          {modelPickerTarget === 'vision'
+            ? 'Add Vision Model'
+            : modelPickerTarget === 'audio'
+              ? 'Add Audio Model'
+              : modelPickerTarget === 'judge'
+                ? 'Select Judge Model'
+                : 'Add Model to Combo'}
+        </h2>
+        <button
+          type="button"
+          onclick={() => (showModelPicker = false)}
+          class="text-text-muted hover:text-text-main cursor-pointer"
+        >
+          <X class="w-4 h-4" />
+        </button>
+      </div>
+
+      <div class="p-4 border-b border-border space-y-2">
+        <div class="relative">
+          <Search class="w-3.5 h-3.5 absolute left-3 top-2.5 text-text-muted pointer-events-none" />
+          <input
+            type="text"
+            bind:value={modelPickerSearch}
+            placeholder="Search active models..."
+            class="w-full bg-surface-2 border border-border rounded-lg pl-9 pr-3 py-1.5 text-xs text-text-main placeholder:text-text-muted focus:outline-none focus:border-brand-500"
+          />
+        </div>
+
+        <!-- Or custom model string -->
+        <div class="flex items-center gap-1.5">
+          <input
+            type="text"
+            bind:value={customModelInput}
+            placeholder="Or type custom model ID..."
+            class="flex-1 bg-surface-2 border border-border rounded-lg px-2.5 py-1 text-xs text-text-main placeholder:text-text-muted font-mono focus:outline-none focus:border-brand-500"
+          />
+          <button
+            type="button"
+            disabled={!customModelInput.trim()}
+            onclick={() => {
+              if (customModelInput.trim()) {
+                selectModel(customModelInput.trim())
+              }
+            }}
+            class="px-2.5 py-1 bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium rounded-lg disabled:opacity-40 cursor-pointer shrink-0"
+          >
+            Add
+          </button>
+        </div>
+      </div>
+
+      <!-- Models List -->
+      <div class="p-2 overflow-y-auto flex-1 max-h-[350px] space-y-1">
+        {#if filteredPickerModels().length === 0}
+          <div class="text-center py-8 text-xs text-text-muted">
+            No matching models found. You can type a custom model above.
+          </div>
+        {:else}
+          {#each filteredPickerModels() as item}
+            <button
+              type="button"
+              onclick={() => selectModel(item.value)}
+              class="w-full text-left flex items-center justify-between px-3 py-2 rounded-lg hover:bg-surface-2 transition-colors cursor-pointer border border-transparent hover:border-border"
+            >
+              <div class="min-w-0 flex-1 pr-2">
+                <div class="flex items-center gap-1.5">
+                  <span class="font-mono text-xs font-medium text-text-main truncate">{item.value}</span>
+                  {#if item.vision}
+                    <span
+                      class="material-symbols-outlined text-[13px] text-blue-500 leading-none"
+                      title="Vision — Supports image input">visibility</span
+                    >
+                  {/if}
+                  {#if item.reasoning}
+                    <span
+                      class="material-symbols-outlined text-[13px] text-amber-500 leading-none"
+                      title="Reasoning — Supports reasoning / thinking">neurology</span
+                    >
+                  {/if}
+                </div>
+                <span class="text-[10px] text-text-muted">{item.provider}</span>
+              </div>
+              <Plus class="w-4 h-4 text-text-muted hover:text-brand-500 shrink-0" />
+            </button>
+          {/each}
+        {/if}
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Confirm Delete Modal -->
+{#if deletingCombo}
+  <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+    <div class="bg-surface border border-border rounded-xl shadow-2xl max-w-sm w-full p-5 space-y-4">
+      <div class="flex items-center gap-3">
+        <div class="size-9 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center shrink-0">
+          <Trash2 class="w-4 h-4" />
+        </div>
+        <div>
+          <h3 class="text-sm font-semibold text-text-main">Delete Combo</h3>
+          <p class="text-xs text-text-muted mt-0.5">Are you sure you want to delete this combo?</p>
+        </div>
+      </div>
+
+      <p class="font-mono text-xs bg-surface-2 p-2 rounded border border-border text-text-main truncate">
+        {deletingCombo.name}
+      </p>
+
+      <div class="flex items-center justify-end gap-2 pt-2">
+        <button
+          type="button"
+          onclick={() => (deletingCombo = null)}
+          class="px-3.5 py-1.5 text-xs text-text-muted hover:text-text-main font-medium rounded-lg cursor-pointer"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onclick={handleDeleteCombo}
+          class="px-4 py-1.5 text-xs bg-red-500 hover:bg-red-600 text-white font-medium rounded-lg shadow-sm transition cursor-pointer"
+        >
+          Delete
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}

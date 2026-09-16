@@ -85,7 +85,7 @@
           {#if activeTab === 'connections'}
             <ConnectionsView {connections} {providerNodes} onRefresh={loadData} />
           {:else if activeTab === 'combos'}
-            <CombosView {combos} onRefresh={loadData} bind:isCreatingOpen={isCreateComboOpen} />
+            <CombosView {combos} {connections} {providerNodes} onRefresh={loadData} bind:isCreatingOpen={isCreateComboOpen} />
           {:else if activeTab === 'analytics'}
             <AnalyticsView {connections} {providerNodes} />
           {:else if activeTab === 'terminal'}

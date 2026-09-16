@@ -4,27 +4,18 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
-	"path/filepath"
 	"syscall"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	chiMiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/urfave/cli/v2"
+	"go.uber.org/fx"
 
-	"9router/proxy/internal/config"
-	"9router/proxy/internal/db"
-	"9router/proxy/internal/handlers"
-	"9router/proxy/internal/middleware"
-	"9router/proxy/internal/providers"
-	"9router/proxy/internal/shutdown"
+	"9router/proxy/internal/app"
 	"9router/proxy/internal/updater"
 )
-
 func main() {
 	app := &cli.App{
 		Name:  "9router-go",
@@ -138,87 +129,24 @@ func runServer(cCtx *cli.Context) error {
 		}
 	}
 
-	cfg := config.LoadConfig()
+	cliParams := app.NewCLIParams(cCtx)
 
-	if err := db.InitGlobalDatabase(cfg.DatabasePath); err != nil {
-		return fmt.Errorf("database init: %w", err)
+	fxApp := fx.New(
+		app.AppModule,
+		fx.Replace(cliParams),
+		app.DefaultFxLogger(),
+	)
+
+	startCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := fxApp.Start(startCtx); err != nil {
+		return err
 	}
-
-	conn, err := db.GetConnection()
-	if err != nil {
-		return fmt.Errorf("database connect: %w", err)
-	}
-	defer conn.Close()
-
-	repo := db.NewRepo(conn)
-
-	ts := handlers.NewTokenSaverConfig(cCtx.Bool("rtk"), cCtx.Bool("caveman"), cCtx.Bool("ponytail"))
-	if settings, sErr := repo.GetSettings(); sErr == nil && settings != nil {
-		rtk := settings.RTKEnabled
-		if cCtx.IsSet("rtk") {
-			rtk = cCtx.Bool("rtk")
-		}
-		caveman := settings.CavemanEnabled
-		if cCtx.IsSet("caveman") {
-			caveman = cCtx.Bool("caveman")
-		}
-		ponytail := settings.PonytailEnabled
-		if cCtx.IsSet("ponytail") {
-			ponytail = cCtx.Bool("ponytail")
-		}
-		ts.SetAll(rtk, caveman, ponytail)
-		ts.SetCaveman(caveman, settings.CavemanLevel)
-		ts.SetPonytail(ponytail, settings.PonytailLevel)
-	}
-	ts.SetInjectionGuard(!cCtx.Bool("no-injection-guard"))
-	log.Printf("[config] token savers — rtk=%v caveman=%v (%s) ponytail=%v (%s)", ts.RTKEnabled(), ts.CavemanEnabled(), ts.CavemanLevel(), ts.PonytailEnabled(), ts.PonytailLevel())
-	autoUpdate := cCtx.Bool("auto-update")
-	if !autoUpdate && repo != nil {
-		if settings, sErr := repo.GetSettings(); sErr == nil && settings != nil {
-			autoUpdate = settings.AutoUpdate
-		}
-	}
-	updater.StartBackgroundCheck(context.Background(), autoUpdate)
-	log.Printf("[config] auto-update enabled=%v", autoUpdate)
-	catalogPath := filepath.Join(filepath.Dir(cfg.DatabasePath), "model-catalog.json")
-	providers.StartBackgroundCatalogSync(context.Background(), nil, catalogPath)
-
-	r := chi.NewRouter()
-	r.Use(middleware.RequestID)
-	r.Use(middleware.MaxBody(middleware.DefaultMaxBodySize))
-	r.Use(chiMiddleware.Recoverer)
-
-	r.Use(middleware.RequestLogger)
-
-	handlers.SetupServerRouter(r, repo, ts)
-
-	addr := fmt.Sprintf(":%d", cfg.Port)
-	log.Printf("9Router Go Proxy (%s) starting on port %d", updater.CurrentVersion, cfg.Port)
 
 	signals := make(chan os.Signal, 2)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 
-	server := &http.Server{
-		Addr:    addr,
-		Handler: r,
-	}
-
-	go func() {
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server failed: %v", err)
-		}
-	}()
-
-	fmt.Fprintf(os.Stdout, "\n  🚀 9Router Go Proxy (%s) on %s\n\n", updater.CurrentVersion, addr)
-	log.Printf("Server is ready to handle requests at %s", addr)
-
 	<-signals // first signal → begin graceful shutdown
-	fmt.Fprintln(os.Stdout, "\n  Shutting down...")
-
-	// Signal in-flight SSE streams to end promptly: the stall reader closes each
-	// upstream body, handlers emit a final [DONE], and Shutdown completes well
-	// within its deadline instead of waiting out the full timeout.
-	shutdown.Cancel()
 
 	// A second signal force-quits immediately (e.g. a stream stuck mid-drain).
 	go func() {
@@ -227,14 +155,8 @@ func runServer(cCtx *cli.Context) error {
 		os.Exit(1)
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if err := server.Shutdown(ctx); err != nil {
-		// Log instead of Fatalf so the deferred conn.Close()/logFile.Close()
-		// still run; SQLite WAL recovers any straggler on next open.
-		log.Printf("Server shutdown did not complete in time: %v", err)
-	} else {
-		log.Println("Server stopped gracefully")
-	}
-	return nil
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer stopCancel()
+	return fxApp.Stop(stopCtx)
 }
+

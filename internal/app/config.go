@@ -6,10 +6,11 @@ import (
 	"9router/proxy/internal/config"
 )
 
-// ConfigModule loads config.Config and provides CLI/environment parameters.
+// ConfigModule loads config.Config, provides *viper.Viper, and provides CLI/environment parameters.
 var ConfigModule = fx.Module("config",
 	fx.Provide(
-		config.LoadConfig,
+		config.ProvideViper,
+		config.ProvideConfig,
 		ProvideConfigValue,
 		ProvideCLIParams,
 		ProvideCLIParamsPtr,

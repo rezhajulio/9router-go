@@ -1,51 +1,18 @@
 package config
 
 import (
-	"bufio"
 	"crypto/rand"
 	"encoding/hex"
-	"9router/proxy/internal/log"
-		"os"
+	"errors"
+	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
-	"strings"
+
+	"github.com/spf13/viper"
 
 	"9router/proxy/internal/constants"
+	"9router/proxy/internal/log"
 )
-
-// loadDotenv reads key=value pairs from .env file and sets them as env vars.
-// Supports single/double-quoted values, strips inline `#` comments (except
-// inside quotes), and never overrides an existing environment variable.
-func loadDotenv(path string) {
-	f, err := os.Open(path)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	s := bufio.NewScanner(f)
-	for s.Scan() {
-		line := strings.TrimSpace(s.Text())
-		if line == "" || line[0] == '#' {
-			continue
-		}
-		k, v, ok := strings.Cut(line, "=")
-		if !ok || k == "" {
-			continue
-		}
-		k = strings.TrimSpace(k)
-		v = strings.TrimSpace(v)
-		if len(v) >= 2 && (v[0] == '"' || v[0] == '\'') && v[len(v)-1] == v[0] {
-			v = v[1 : len(v)-1]
-		} else if idx := strings.IndexByte(v, '#'); idx >= 0 {
-			v = strings.TrimSpace(v[:idx])
-		}
-		// Existing env vars take precedence
-		if os.Getenv(k) == "" {
-			os.Setenv(k, v)
-		}
-	}
-}
 
 // Config holds the proxy gateway configuration.
 type Config struct {
@@ -58,6 +25,50 @@ type Config struct {
 	RTKEnabled      bool
 	CavemanEnabled  bool
 	PonytailEnabled bool
+}
+
+// NewViper creates and configures a new Viper instance reading from .env with standard defaults.
+func NewViper() *viper.Viper {
+	return NewViperWithFile(".env")
+}
+
+// NewViperWithFile creates and configures a new Viper instance with the specified env file path.
+func NewViperWithFile(configFile string) *viper.Viper {
+	v := viper.New()
+	if configFile != "" {
+		v.SetConfigFile(configFile)
+		v.SetConfigType("env")
+	}
+
+	v.AutomaticEnv()
+
+	v.SetDefault("PORT", 20130)
+	v.SetDefault("API_KEY_SECRET", "endpoint-proxy-api-key-secret")
+	v.SetDefault("MACHINE_ID_SALT", "endpoint-proxy-salt")
+	v.SetDefault("RTK_ENABLED", true)
+	v.SetDefault("CAVEMAN_ENABLED", false)
+	v.SetDefault("PONYTAIL_ENABLED", false)
+
+	if configFile != "" {
+		if err := v.ReadInConfig(); err != nil {
+			var configFileNotFoundError viper.ConfigFileNotFoundError
+			if !errors.Is(err, os.ErrNotExist) && !os.IsNotExist(err) && !errors.As(err, &configFileNotFoundError) {
+				log.Warn("config", "read config file failed", "file", configFile, "error", err)
+			}
+		}
+	}
+
+	return v
+}
+
+// ProvideViper returns a configured Viper instance for dependency injection.
+func ProvideViper() *viper.Viper {
+	return NewViper()
+}
+
+// ProvideConfig provides *Config for dependency injection using the provided Viper instance.
+func ProvideConfig(v *viper.Viper) *Config {
+	return LoadConfigFromViper(v)
 }
 
 // ResolveDataDir returns the base data directory: DATA_DIR env, else the
@@ -79,16 +90,26 @@ func ResolveDataDir() string {
 	return ".9router"
 }
 
-// LoadConfig loads the configuration from environment variables and platform defaults.
+// LoadConfig loads the configuration from environment variables, .env file, and platform defaults using Viper.
 func LoadConfig() *Config {
-	loadDotenv(".env")
-	portStr := os.Getenv("PORT")
-	port, err := strconv.Atoi(portStr)
-	if err != nil || port <= 0 {
+	return LoadConfigFromViper(NewViper())
+}
+
+// LoadConfigFromViper builds *Config using the given Viper instance.
+func LoadConfigFromViper(v *viper.Viper) *Config {
+	if v == nil {
+		v = NewViper()
+	}
+
+	port := v.GetInt("PORT")
+	if port <= 0 {
 		port = 20130 // Default port (unified port)
 	}
 
-	dataDir := ResolveDataDir()
+	dataDir := v.GetString("DATA_DIR")
+	if dataDir == "" {
+		dataDir = ResolveDataDir()
+	}
 
 	// Ensure the base data directory exists
 	if err := os.MkdirAll(dataDir, constants.FilePermDir); err != nil {
@@ -96,7 +117,7 @@ func LoadConfig() *Config {
 	}
 
 	// Database file: DB_PATH overrides default DATA_DIR/db/data.sqlite
-	dbPath := os.Getenv("DB_PATH")
+	dbPath := v.GetString("DB_PATH")
 	if dbPath == "" {
 		dbPath = filepath.Join(dataDir, "db", "data.sqlite")
 	} else if fi, err := os.Stat(dbPath); err == nil && fi.IsDir() {
@@ -113,26 +134,26 @@ func LoadConfig() *Config {
 
 	// INITIAL_PASSWORD has no hardcoded default — an empty value forces the
 	// operator to set one explicitly rather than shipping a known password.
-	initialPassword := os.Getenv("INITIAL_PASSWORD")
+	initialPassword := v.GetString("INITIAL_PASSWORD")
 
-	apiKeySecret := os.Getenv("API_KEY_SECRET")
+	apiKeySecret := v.GetString("API_KEY_SECRET")
 	if apiKeySecret == "" {
 		apiKeySecret = "endpoint-proxy-api-key-secret"
 	}
 
-	machineIDSalt := os.Getenv("MACHINE_ID_SALT")
+	machineIDSalt := v.GetString("MACHINE_ID_SALT")
 	if machineIDSalt == "" {
 		machineIDSalt = "endpoint-proxy-salt"
 	}
 
-	rtkEnabled := os.Getenv("RTK_ENABLED") != "false" // default on
-	cavemanEnabled := os.Getenv("CAVEMAN_ENABLED") == "true"
-	ponytailEnabled := os.Getenv("PONYTAIL_ENABLED") == "true"
+	rtkEnabled := v.GetBool("RTK_ENABLED")
+	cavemanEnabled := v.GetBool("CAVEMAN_ENABLED")
+	ponytailEnabled := v.GetBool("PONYTAIL_ENABLED")
 
 	return &Config{
 		Port:            port,
 		DatabasePath:    dbPath,
-		JWTSecret:       loadJWTSecret(dataDir),
+		JWTSecret:       loadJWTSecret(v, dataDir),
 		InitialPassword: initialPassword,
 		APIKeySecret:    apiKeySecret,
 		MachineIDSalt:   machineIDSalt,
@@ -142,8 +163,14 @@ func LoadConfig() *Config {
 	}
 }
 
-func loadJWTSecret(dataDir string) string {
-	secret := os.Getenv("JWT_SECRET")
+func loadJWTSecret(v *viper.Viper, dataDir string) string {
+	var secret string
+	if v != nil {
+		secret = v.GetString("JWT_SECRET")
+	}
+	if secret == "" {
+		secret = os.Getenv("JWT_SECRET")
+	}
 	if secret != "" {
 		return secret
 	}

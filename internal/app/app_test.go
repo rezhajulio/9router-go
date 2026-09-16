@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/spf13/viper"
 	"go.uber.org/fx"
-
 	"9router/proxy/internal/app"
 	"9router/proxy/internal/config"
 	"9router/proxy/internal/db"
@@ -46,15 +46,19 @@ func TestConfigModule(t *testing.T) {
 	var cfgVal config.Config
 	var params app.CLIParams
 	var paramsPtr *app.CLIParams
+	var v *viper.Viper
 
 	fxApp := fx.New(
 		app.ConfigModule,
 		fx.NopLogger,
-		fx.Populate(&cfg, &cfgVal, &params, &paramsPtr),
+		fx.Populate(&cfg, &cfgVal, &params, &paramsPtr, &v),
 	)
 
 	if err := fxApp.Err(); err != nil {
 		t.Fatalf("ConfigModule failed to initialize: %v", err)
+	}
+	if v == nil {
+		t.Fatal("expected *viper.Viper to be provided")
 	}
 	if cfg == nil {
 		t.Fatal("expected *config.Config to be provided")

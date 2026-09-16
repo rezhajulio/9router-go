@@ -32,6 +32,7 @@
       connections = connsRes
       providerNodes = nodesRes
       combos = combosRes
+      apiKeys = keysRes
       settings = settingsRes
     } finally {
       isLoading = false
@@ -86,7 +87,7 @@
           {:else if activeTab === 'combos'}
             <CombosView {combos} onRefresh={loadData} bind:isCreatingOpen={isCreateComboOpen} />
           {:else if activeTab === 'analytics'}
-            <AnalyticsView />
+            <AnalyticsView {connections} {providerNodes} />
           {:else if activeTab === 'terminal'}
             <TerminalView />
           {:else if activeTab === 'keys'}

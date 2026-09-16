@@ -207,8 +207,9 @@ export const api = {
   getAntigravityAuthorizeUrl: () => request<{ url: string; redirectUrl: string; state: string }>('/api/oauth/antigravity/authorize'),
 
   // Usage & Telemetry
-  getUsageStats: () => request<any>('/api/usage/stats'),
-  getSystemVersion: () => request<{ version: string }>('/api/version'),
+  getUsageStats: (period = 'today') => request<any>(`/api/usage/stats?period=${encodeURIComponent(period)}`),
+  getRequestDetails: (limit = 50, offset = 0) =>
+    request<any>(`/api/usage/request-details?limit=${limit}&offset=${offset}`),
   resetHealth: (provider: string, model?: string) =>
     request<{ status: string }>(`/admin/health/reset?provider=${encodeURIComponent(provider)}${model ? `&model=${encodeURIComponent(model)}` : ''}`, {
       method: 'POST',

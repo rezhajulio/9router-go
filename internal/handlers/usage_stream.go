@@ -73,12 +73,3 @@ func HandleUsageStream(repo *db.Repo) http.HandlerFunc {
 		}
 	}
 }
-
-// HandleUsageStats returns current active and pending stats as JSON.
-func HandleUsageStats(repo *db.Repo) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		tracker := usagetracker.GetTracker()
-		state := tracker.GetActiveState(repo)
-		handlerutil.WriteJSON(w, http.StatusOK, state)
-	}
-}

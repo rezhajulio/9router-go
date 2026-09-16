@@ -3,6 +3,8 @@
     Activity,
     AlertTriangle,
     Check,
+    ChevronDown,
+    ChevronRight,
     Copy,
     Cpu,
     ExternalLink,
@@ -20,6 +22,13 @@
     Zap
   } from 'lucide-svelte'
   import { api, type ProviderConnection } from '../api/client'
+  import {
+    PROVIDER_CATALOG,
+    PROVIDER_CATEGORIES,
+    type ProviderCatalogItem
+  } from '../lib/providers'
+  import Button from '../lib/ui/Button.svelte'
+  import Badge from '../lib/ui/Badge.svelte'
 
   let {
     connections = [],
@@ -29,33 +38,60 @@
     onRefresh: () => void
   } = $props()
 
+  // Filters
   let search = $state('')
-  let filterType = $state<'all' | 'active' | 'oauth' | 'custom' | 'free'>('all')
+  let statusFilter = $state<'all' | 'connected' | 'not_connected'>('all')
+  let activeCategory = $state<string>('all')
+
+  // Expanded provider cards (show account list)
+  let expandedProviders = $state<Record<string, boolean>>({})
 
   // Modals
-  let isAddOpen = $state(false)
-  let addPreset = $state<'openai' | 'anthropic'>('openai')
+  let isAddCompatibleOpen = $state(false)
+  let compatiblePreset = $state<'openai' | 'anthropic'>('openai')
+  let isConnectKeyOpen = $state(false)
+  let connectTargetProvider = $state<ProviderCatalogItem | null>(null)
   let isFreebuffModalOpen = $state(false)
   let isAntigravityModalOpen = $state(false)
 
-  // Form Fields
-  let formProvider = $state('openai')
+  // Form states
   let formName = $state('')
   let formApiKey = $state('')
   let formBaseUrl = $state('')
   let formPriority = $state(1)
   let isSubmitting = $state(false)
 
-  // Latency ping map
+  // Latency & copy states
   let latencyMap = $state<Record<string, number | 'error' | 'testing'>>({})
   let isPingingAll = $state(false)
   let copiedId = $state<string | null>(null)
 
-  // Freebuff Device Flow State
+  // Freebuff flow
   let fbAuthCode = $state('')
   let fbFingerprint = $state('')
   let fbStatus = $state<'idle' | 'polling' | 'success' | 'error'>('idle')
   let fbMessage = $state('')
+
+  // Map connections by provider id
+  let connectionsByProvider = $derived.by(() => {
+    const map = new Map<string, ProviderConnection[]>()
+    for (const c of connections) {
+      const list = map.get(c.provider) || []
+      list.push(c)
+      map.set(c.provider, list)
+    }
+    return map
+  })
+
+  // Detect custom compatible connections (openai-compatible-*, anthropic-compatible-*, or prefixed)
+  let customConnections = $derived(
+    connections.filter(
+      (c) =>
+        c.provider.startsWith('openai-compatible') ||
+        c.provider.startsWith('anthropic-compatible') ||
+        c.provider.startsWith('custom-')
+    )
+  )
 
   function copyText(text: string, id: string) {
     navigator.clipboard.writeText(text)
@@ -63,112 +99,120 @@
     setTimeout(() => (copiedId = null), 2000)
   }
 
-  let activeCount = $derived(connections.filter((c) => c.isActive === 1).length)
-  let oauthCount = $derived(connections.filter((c) => c.type === 'oauth').length)
-  let customCount = $derived(connections.filter((c) => c.type !== 'oauth').length)
-  let freeCount = $derived(connections.filter((c) => c.provider === 'freebuff' || c.name.toLowerCase().includes('free')).length)
+  function toggleExpand(providerId: string) {
+    expandedProviders[providerId] = !expandedProviders[providerId]
+  }
 
-  // Split connections
-  let antigravityAccounts = $derived(connections.filter((c) => c.provider === 'antigravity'))
-  let freebuffAccounts = $derived(connections.filter((c) => c.provider === 'freebuff'))
-  let clineAccounts = $derived(connections.filter((c) => c.provider === 'cline' || c.provider === 'clinepass'))
-
-  let customProxies = $derived(
-    connections.filter((c) => {
-      if (c.provider === 'antigravity' || c.provider === 'freebuff') return false
-      if (search.trim()) {
-        const q = search.toLowerCase()
-        return (
-          c.name.toLowerCase().includes(q) ||
-          c.provider.toLowerCase().includes(q) ||
-          (c.baseUrl && c.baseUrl.toLowerCase().includes(q))
-        )
-      }
-      if (filterType === 'active') return c.isActive === 1
-      if (filterType === 'oauth') return c.type === 'oauth'
-      if (filterType === 'custom') return c.type !== 'oauth'
-      if (filterType === 'free') return c.name.toLowerCase().includes('free')
-      return true
-    })
-  )
-
-  async function handleToggle(conn: ProviderConnection) {
+  async function handleToggleConnection(conn: ProviderConnection) {
     try {
-      await api.toggleConnection(conn.id)
+      const newActive = conn.isActive === 1 ? 0 : 1
+      await api.updateConnection(conn.id, { isActive: newActive })
       onRefresh()
     } catch (err) {
-      alert(`Failed to toggle: ${err instanceof Error ? err.message : String(err)}`)
+      alert(`Toggle failed: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 
-  async function handleDelete(conn: ProviderConnection) {
+  async function handleDeleteConnection(conn: ProviderConnection) {
     if (!confirm(`Revoke and delete connection "${conn.name || conn.id}"?`)) return
     try {
       await api.deleteConnection(conn.id)
       onRefresh()
     } catch (err) {
-      alert(`Failed to delete: ${err instanceof Error ? err.message : String(err)}`)
+      alert(`Delete failed: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 
-  async function handleTestPing(conn: ProviderConnection) {
-    latencyMap[conn.id] = 'testing'
+  async function handleTestPing(connId: string, provider: string) {
+    latencyMap[connId] = 'testing'
     const start = performance.now()
     try {
       const res = await fetch('/v1/models', {
-        headers: { 'x-provider': conn.provider },
+        headers: { 'x-provider': provider },
       })
       const rtt = Math.round(performance.now() - start)
-      if (res.ok) {
-        latencyMap[conn.id] = rtt
-      } else {
-        latencyMap[conn.id] = 'error'
-      }
+      latencyMap[connId] = res.ok ? rtt : 'error'
     } catch {
-      latencyMap[conn.id] = 'error'
+      latencyMap[connId] = 'error'
     }
   }
 
   async function handleTestAll() {
     isPingingAll = true
     for (const conn of connections.filter((c) => c.isActive === 1)) {
-      handleTestPing(conn)
+      handleTestPing(conn.id, conn.provider)
     }
-    setTimeout(() => {
-      isPingingAll = false
-    }, 2000)
+    setTimeout(() => (isPingingAll = false), 2500)
   }
 
-  async function handleAddSubmit(e: SubmitEvent) {
+  function openConnectModal(item: ProviderCatalogItem) {
+    if (item.id === 'antigravity') {
+      isAntigravityModalOpen = true
+      return
+    }
+    if (item.id === 'freebuff') {
+      isFreebuffModalOpen = true
+      startFreebuffFlow()
+      return
+    }
+    connectTargetProvider = item
+    formName = `${item.name} Key`
+    formApiKey = ''
+    formBaseUrl = ''
+    formPriority = 1
+    isConnectKeyOpen = true
+  }
+
+  function openAddCompatible(preset: 'openai' | 'anthropic') {
+    compatiblePreset = preset
+    formName = preset === 'anthropic' ? 'Anthropic Compatible' : 'OpenAI Compatible'
+    formBaseUrl = preset === 'anthropic' ? 'https://api.anthropic.com/v1' : 'https://api.openai.com/v1'
+    formApiKey = ''
+    formPriority = 1
+    isAddCompatibleOpen = true
+  }
+
+  async function handleSaveKeyConnection(e: SubmitEvent) {
     e.preventDefault()
-    if (!formProvider || !formApiKey) return
+    if (!connectTargetProvider || !formApiKey) return
     isSubmitting = true
     try {
       await api.createConnection({
-        provider: formProvider,
-        name: formName || `${formProvider}-custom`,
+        provider: connectTargetProvider.id,
+        authType: connectTargetProvider.category === 'oauth' ? 'oauth' : 'apikey',
+        name: formName || connectTargetProvider.name,
         apiKey: formApiKey,
-        baseUrl: formBaseUrl || undefined,
-        priority: formPriority,
+        data: formBaseUrl ? JSON.stringify({ baseUrl: formBaseUrl }) : undefined,
       })
-      isAddOpen = false
-      formName = ''
-      formApiKey = ''
-      formBaseUrl = ''
+      isConnectKeyOpen = false
+      connectTargetProvider = null
       onRefresh()
     } catch (err) {
-      alert(`Failed to create connection: ${err instanceof Error ? err.message : String(err)}`)
+      alert(`Connect failed: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
       isSubmitting = false
     }
   }
 
-  function openAddModal(preset: 'openai' | 'anthropic') {
-    addPreset = preset
-    formProvider = preset
-    formName = preset === 'anthropic' ? 'Anthropic Compatible (Prod)' : 'OpenAI Compatible (Custom)'
-    formBaseUrl = preset === 'anthropic' ? 'https://api.anthropic.com/v1' : 'https://api.openai.com/v1'
-    isAddOpen = true
+  async function handleSaveCompatible(e: SubmitEvent) {
+    e.preventDefault()
+    if (!formApiKey) return
+    isSubmitting = true
+    try {
+      await api.createConnection({
+        provider: compatiblePreset,
+        authType: 'compatible',
+        name: formName || `${compatiblePreset}-custom`,
+        apiKey: formApiKey,
+        data: formBaseUrl ? JSON.stringify({ baseUrl: formBaseUrl }) : undefined,
+      })
+      isAddCompatibleOpen = false
+      onRefresh()
+    } catch (err) {
+      alert(`Add compatible failed: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      isSubmitting = false
+    }
   }
 
   async function startFreebuffFlow() {
@@ -178,7 +222,7 @@
     fbAuthCode = code
     fbFingerprint = 'cli_' + code.substring(0, 16)
     fbStatus = 'polling'
-    fbMessage = 'Browser window opened. Log in on Freebuff to authorize token...'
+    fbMessage = 'Browser opened. Authorize token on Freebuff...'
 
     window.open(`https://freebuff.com/login?auth_code=${fbAuthCode}`, '_blank')
 
@@ -188,15 +232,15 @@
         return
       }
       try {
-        const res = await api.pollFreebuffToken(fbAuthCode, fbFingerprint)
-        if (res && res.status === 'success') {
+        const res = await api.pollFreebuff(fbFingerprint, fbAuthCode)
+        if (res && res.status === 'authorized') {
           clearInterval(pollInterval)
           fbStatus = 'success'
-          fbMessage = 'Freebuff authorized successfully! Session credentials stored.'
+          fbMessage = 'Freebuff authorized! Credentials saved.'
           onRefresh()
         }
       } catch {
-        // continue polling
+        // continue
       }
     }, 2500)
 
@@ -204,824 +248,1014 @@
       if (fbStatus === 'polling') {
         clearInterval(pollInterval)
         fbStatus = 'error'
-        fbMessage = 'Device authorization timed out. Please try again.'
+        fbMessage = 'Pairing timed out. Try again.'
       }
     }, 180000)
   }
 
-  const virtualGeminiModels = [
-    { id: 'ag/gemini-2.5-flash-high', name: 'Gemini 2.5 Flash [High]' },
-    { id: 'ag/gemini-2.5-flash-medium', name: 'Gemini 2.5 Flash [Medium]' },
-    { id: 'ag/gemini-2.5-flash-low', name: 'Gemini 2.5 Flash [Low]' },
-    { id: 'ag/gemini-2.5-flash', name: 'Gemini 2.5 Flash Standard' },
-  ]
+  // Filter helper for catalog items
+  function matchFilter(item: ProviderCatalogItem): boolean {
+    if (activeCategory !== 'all' && item.category !== activeCategory) return false
+
+    const conns = connectionsByProvider.get(item.id) || []
+    const isConnected = conns.length > 0
+    if (statusFilter === 'connected' && !isConnected) return false
+    if (statusFilter === 'not_connected' && isConnected) return false
+
+    if (search.trim()) {
+      const q = search.toLowerCase()
+      const matchName = item.name.toLowerCase().includes(q)
+      const matchId = item.id.toLowerCase().includes(q)
+      const matchAlias = item.alias?.toLowerCase().includes(q)
+      const matchConn = conns.some(
+        (c) =>
+          c.name?.toLowerCase().includes(q) ||
+          c.email?.toLowerCase().includes(q) ||
+          (c.baseUrl && c.baseUrl.toLowerCase().includes(q))
+      )
+      return matchName || matchId || matchAlias || matchConn
+    }
+
+    return true
+  }
+
+  // Summary counts
+  let totalConnectedProviders = $derived(
+    new Set(connections.map((c) => c.provider)).size
+  )
+  let totalActiveConnections = $derived(
+    connections.filter((c) => c.isActive === 1).length
+  )
+
+  // Show-all state for large API-key section
+  let showAllApiKey = $state(false)
 </script>
 
-<div class="space-y-6">
-  <!-- Top Action & Filter Bar (From Stitch Screenshot) -->
-  <div class="space-y-4">
-    <div class="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
-      <div class="space-y-1.5">
-        <div class="flex items-center gap-2">
-          <span class="font-code text-[10px] uppercase tracking-wider text-brand-500 px-2 py-0.5 rounded bg-brand-500/10 border border-brand-500/25 font-bold">
-            Upstream Matrix
-          </span>
-          <span class="font-code text-[11px] text-info flex items-center gap-1.5 font-medium">
-            <span class="w-1.5 h-1.5 rounded-full bg-info animate-pulse"></span>
-            {activeCount} Nodes Active
-          </span>
-        </div>
-        <h1 class="font-headline text-2xl sm:text-3xl font-bold text-text-main tracking-tight">
-          Providers & API Connections
-        </h1>
-        <p class="font-body text-xs sm:text-sm text-text-muted max-w-2xl leading-relaxed">
-          Manage your AI upstream providers, multi-account OAuth pools, and OpenAI/Anthropic compatible proxies with automated failover and sub-millisecond health checks.
-        </p>
-      </div>
-
-      <!-- Action Cluster -->
-      <div class="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onclick={() => openAddModal('anthropic')}
-          class="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 text-white font-body text-xs font-bold shadow-md shadow-brand-500/25 transition cursor-pointer"
+<div class="space-y-8">
+  <!-- Top Action & Status Bar -->
+  <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+    <div>
+      <div class="flex items-center gap-2 mb-1">
+        <span
+          class="text-[10px] uppercase tracking-wider text-brand-500 font-code font-bold px-2 py-0.5 rounded bg-brand-500/10 border border-brand-500/25"
         >
-          <Plus class="w-4 h-4" />
-          <span>+ Add Anthropic Compatible</span>
-        </button>
-
-        <button
-          type="button"
-          onclick={() => openAddModal('openai')}
-          class="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-surface-2 hover:bg-surface-3 text-text-main font-body text-xs font-semibold border border-border transition cursor-pointer"
-        >
-          <Plus class="w-4 h-4 text-info" />
-          <span>Add OpenAI Compatible</span>
-        </button>
-
-        <button
-          type="button"
-          onclick={() => (isAntigravityModalOpen = true)}
-          class="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-surface-2 hover:bg-surface-3 text-text-main font-body text-xs font-semibold border border-border transition cursor-pointer"
-        >
-          <Key class="w-4 h-4 text-success" />
-          <span>Connect OAuth</span>
-        </button>
-
-        <button
-          type="button"
-          onclick={handleTestAll}
-          disabled={isPingingAll}
-          class="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-surface hover:bg-surface-3 text-text-muted hover:text-text-main font-body text-xs border border-border transition cursor-pointer"
-        >
-          {#if isPingingAll}
-            <Loader2 class="w-4 h-4 animate-spin text-info" />
-          {:else}
-            <Activity class="w-4 h-4 text-info" />
-          {/if}
-          <span>Test All Connections</span>
-        </button>
-      </div>
-    </div>
-
-    <!-- Filter & Search Rail (Stitch Screenshot) -->
-    <div class="flex flex-col sm:flex-row items-center justify-between gap-3 p-2 rounded-xl bg-surface border border-border">
-      <div class="flex items-center gap-1 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0">
-        <button
-          type="button"
-          onclick={() => (filterType = 'all')}
-          class="px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer {filterType === 'all'
-            ? 'bg-surface-3 text-text-main shadow-sm'
-            : 'text-text-muted hover:text-text-main hover:bg-surface-3'}"
-        >
-          <span>All Providers</span>
-          <span class="font-code text-[10px] px-1.5 py-0.2 rounded bg-surface-2 text-info">
-            {connections.length}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onclick={() => (filterType = 'active')}
-          class="px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer {filterType === 'active'
-            ? 'bg-surface-3 text-text-main shadow-sm'
-            : 'text-text-muted hover:text-text-main hover:bg-surface-3'}"
-        >
-          <span>Active</span>
-          <span class="font-code text-[10px] px-1.5 py-0.2 rounded bg-success/15 text-success">
-            {activeCount}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onclick={() => (filterType = 'oauth')}
-          class="px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer {filterType === 'oauth'
-            ? 'bg-surface-3 text-text-main shadow-sm'
-            : 'text-text-muted hover:text-text-main hover:bg-surface-3'}"
-        >
-          <span>OAuth Multiplex</span>
-          <span class="font-code text-[10px] px-1.5 py-0.2 rounded bg-surface-2 text-text-muted">
-            {oauthCount}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onclick={() => (filterType = 'custom')}
-          class="px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer {filterType === 'custom'
-            ? 'bg-surface-3 text-text-main shadow-sm'
-            : 'text-text-muted hover:text-text-main hover:bg-surface-3'}"
-        >
-          <span>Custom Proxies</span>
-          <span class="font-code text-[10px] px-1.5 py-0.2 rounded bg-surface-2 text-text-muted">
-            {customCount}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onclick={() => (filterType = 'free')}
-          class="px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer {filterType === 'free'
-            ? 'bg-surface-3 text-text-main shadow-sm'
-            : 'text-text-muted hover:text-text-main hover:bg-surface-3'}"
-        >
-          <span>Free Tier</span>
-          <span class="font-code text-[10px] px-1.5 py-0.2 rounded bg-surface-2 text-text-muted">
-            {freeCount}
-          </span>
-        </button>
-      </div>
-
-      <!-- Search Input with ⌘F -->
-      <div class="relative w-full sm:w-80 flex items-center">
-        <Search class="absolute left-3 w-4 h-4 text-text-subtle pointer-events-none" />
-        <input
-          type="text"
-          bind:value={search}
-          placeholder="Filter by endpoint, key hash, or model..."
-          class="w-full bg-surface-2 border border-border rounded-lg pl-9 pr-12 py-1.5 font-body text-xs text-text-main placeholder:text-text-subtle focus:outline-none focus:border-brand-500 transition"
-        />
-        <span class="absolute right-2 px-1.5 py-0.5 rounded bg-surface-2 font-code text-[10px] text-text-muted pointer-events-none border border-border">
-          ⌘F
+          Provider Matrix
+        </span>
+        <span class="text-xs text-text-muted">•</span>
+        <span class="text-xs font-code text-success flex items-center gap-1.5">
+          <span class="w-1.5 h-1.5 rounded-full bg-success animate-pulse"></span>
+          {totalActiveConnections} active accounts across {totalConnectedProviders} providers
         </span>
       </div>
+      <h2 class="text-2xl font-bold tracking-tight text-text-main font-headline">
+        Providers & Endpoints
+      </h2>
+      <p class="text-xs text-text-muted mt-1">
+        Manage upstream LLMs, multi-account OAuth pools, and OpenAI/Anthropic compatible proxies.
+      </p>
+    </div>
+
+    <!-- Actions -->
+    <div class="flex flex-wrap items-center gap-2">
+      <Button variant="primary" size="sm" onclick={() => openAddCompatible('anthropic')}>
+        <Plus class="w-3.5 h-3.5" />
+        Add Anthropic Compatible
+      </Button>
+      <Button variant="secondary" size="sm" onclick={() => openAddCompatible('openai')}>
+        <Plus class="w-3.5 h-3.5" />
+        Add OpenAI Compatible
+      </Button>
+      <Button variant="secondary" size="sm" onclick={handleTestAll} disabled={isPingingAll}>
+        {#if isPingingAll}
+          <Loader2 class="w-3.5 h-3.5 animate-spin text-info" />
+        {:else}
+          <Activity class="w-3.5 h-3.5 text-info" />
+        {/if}
+        Test All Active
+      </Button>
     </div>
   </div>
 
-  <!-- SECTION 1: Active OAuth & Multi-Account Pools (Antigravity Expanded Matrix) -->
-  <div class="space-y-3">
-    <div class="flex items-center justify-between px-1">
-      <div class="flex items-center gap-2">
-        <Shield class="w-4 h-4 text-info" />
-        <h2 class="font-headline text-base font-bold text-text-main">OAuth High-Availability Pools</h2>
-      </div>
-      <span class="font-code text-[11px] text-text-subtle">Virtual Session Balancing · Auto-Rotating</span>
+  <!-- Filter Rail -->
+  <div
+    class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-3 rounded-[14px] bg-surface border border-border-subtle shadow-[var(--shadow-soft)]"
+  >
+    <!-- Status Filter -->
+    <div class="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0">
+      <button
+        type="button"
+        onclick={() => (statusFilter = 'all')}
+        class="px-3 py-1.5 rounded-[8px] text-xs font-medium transition-colors cursor-pointer {statusFilter ===
+        'all'
+          ? 'bg-surface-3 text-text-main font-semibold'
+          : 'text-text-muted hover:text-text-main hover:bg-surface-2'}"
+      >
+        All ({PROVIDER_CATALOG.length + customConnections.length})
+      </button>
+
+      <button
+        type="button"
+        onclick={() => (statusFilter = 'connected')}
+        class="px-3 py-1.5 rounded-[8px] text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5 {statusFilter ===
+        'connected'
+          ? 'bg-surface-3 text-text-main font-semibold'
+          : 'text-text-muted hover:text-text-main hover:bg-surface-2'}"
+      >
+        <span>Connected</span>
+        <Badge tone="success" class="text-[10px] px-1.5 py-0">{connections.length}</Badge>
+      </button>
+
+      <button
+        type="button"
+        onclick={() => (statusFilter = 'not_connected')}
+        class="px-3 py-1.5 rounded-[8px] text-xs font-medium transition-colors cursor-pointer {statusFilter ===
+        'not_connected'
+          ? 'bg-surface-3 text-text-main font-semibold'
+          : 'text-text-muted hover:text-text-main hover:bg-surface-2'}"
+      >
+        Not Connected
+      </button>
+
+      <!-- Category quick tabs -->
+      <div class="h-4 w-px bg-border mx-1"></div>
+
+      <button
+        type="button"
+        onclick={() => (activeCategory = 'all')}
+        class="px-2.5 py-1 rounded-[6px] text-xs transition cursor-pointer {activeCategory ===
+        'all'
+          ? 'bg-brand-500/10 text-brand-600 dark:text-brand-400 font-semibold'
+          : 'text-text-subtle hover:text-text-main'}"
+      >
+        All Groups
+      </button>
+      {#each PROVIDER_CATEGORIES as cat (cat.id)}
+        <button
+          type="button"
+          onclick={() => (activeCategory = cat.id)}
+          class="px-2.5 py-1 rounded-[6px] text-xs whitespace-nowrap transition cursor-pointer {activeCategory ===
+          cat.id
+            ? 'bg-brand-500/10 text-brand-600 dark:text-brand-400 font-semibold'
+            : 'text-text-subtle hover:text-text-main'}"
+        >
+          {cat.label.split(' ')[0]}
+        </button>
+      {/each}
     </div>
 
-    <!-- Antigravity Master Node Container (Stitch Design) -->
-    <div class="rounded-xl bg-surface border border-border overflow-hidden shadow-xl">
-      <!-- Antigravity Header Rail -->
-      <div class="p-5 bg-surface-2 border-b border-border flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-        <div class="flex items-center gap-4">
-          <!-- Antigravity Logo -->
-          <div class="w-12 h-12 rounded-xl bg-bg border border-border flex items-center justify-center text-info shadow-inner">
-            <svg class="w-7 h-7" fill="currentColor" viewBox="0 0 32 32">
-              <path d="M16 2L3 28h26L16 2zm0 6.2l9.1 18H6.9L16 8.2z"></path>
-              <circle cx="16" cy="18" r="3"></circle>
-            </svg>
+    <!-- Search Input -->
+    <div class="relative min-w-[240px]">
+      <Search class="w-3.5 h-3.5 text-text-subtle absolute left-3 top-2.5 pointer-events-none" />
+      <input
+        type="text"
+        bind:value={search}
+        placeholder="Filter by name, alias, key, or email..."
+        class="w-full bg-surface-2 border border-border-subtle rounded-[10px] pl-9 pr-3 py-1.5 text-xs text-text-main placeholder:text-text-subtle focus:outline-none focus:border-brand-500/50"
+      />
+    </div>
+  </div>
+
+  <!-- SECTION 0: Custom Compatible Endpoints (from user's DB) -->
+  {#if activeCategory === 'all' || activeCategory === 'custom'}
+    {#if customConnections.length > 0 || statusFilter !== 'connected'}
+      <div class="space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <Cpu class="w-4 h-4 text-brand-500" />
+            <h3 class="text-base font-semibold text-text-main">
+              Custom Compatible Endpoints
+            </h3>
+            <Badge tone="default">{customConnections.length}</Badge>
           </div>
-
-          <div class="space-y-1">
-            <div class="flex items-center gap-2">
-              <h3 class="font-headline text-base font-bold text-text-main">Antigravity Multi-Pool</h3>
-              <span class="font-code text-[10px] px-2 py-0.5 rounded-full bg-success/15 text-success flex items-center gap-1 font-semibold border border-success/25">
-                <span class="w-1.5 h-1.5 rounded-full bg-success animate-ping"></span>
-                {antigravityAccounts.filter((a) => a.isActive === 1).length} Connected
-              </span>
-              <span class="font-code text-[10px] px-2 py-0.5 rounded bg-bg text-info border border-border">
-                Round-Robin Active
-              </span>
-            </div>
-            <div class="flex items-center gap-3 text-xs text-text-muted">
-              <span>Mean RTT: <strong class="font-code text-success">42ms</strong></span>
-              <span>•</span>
-              <span>Success Rate: <strong class="font-code text-success">99.82%</strong></span>
-              <span>•</span>
-              <button
-                type="button"
-                onclick={() => (isAntigravityModalOpen = true)}
-                class="text-info hover:underline flex items-center gap-1 cursor-pointer"
-              >
-                <span>Manage OAuth credentials</span>
-                <ExternalLink class="w-3 h-3" />
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Pool Orchestration Controls -->
-        <div class="flex items-center gap-2">
-          <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-bg border border-border">
-            <span class="font-body text-xs text-text-muted">Balancing</span>
-            <div class="w-2 h-2 rounded-full bg-info animate-pulse"></div>
-          </div>
-
-          <button
-            type="button"
-            onclick={() => handleTestAll()}
-            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-bg hover:bg-surface-2 text-text-main text-xs font-semibold border border-border transition cursor-pointer"
-          >
-            <Activity class="w-3.5 h-3.5 text-success" />
-            <span>Apply Proxy</span>
-          </button>
-
-          <button
-            type="button"
-            onclick={() => handleTestAll()}
-            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-bg hover:bg-surface-2 text-text-main text-xs font-semibold border border-border transition cursor-pointer"
-          >
-            <Zap class="w-3.5 h-3.5 text-brand-500" />
-            <span>Test Sequential</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- Alert Banner (Stitch Design) -->
-      <div class="p-3 bg-surface border-b border-border flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-        <div class="flex items-center gap-2 text-brand-400">
-          <AlertTriangle class="w-4 h-4 flex-shrink-0" />
-          <span class="font-bold">High Availability Autonomous Routing Active:</span>
-          <span class="text-text-muted hidden md:inline">
-            Proxy pool operating with proactive token refresh. Auto-failover configured on HTTP 429 & limit. Cooldown set to 90s.
+          <span class="text-xs text-text-subtle">
+            User-registered OpenAI & Anthropic reverse proxies
           </span>
         </div>
-        <span class="font-code text-[10px] text-brand-400 bg-brand-500/10 px-2 py-0.5 rounded border border-brand-500/20 self-start sm:self-auto">
-          Cluster Policy v2.4
-        </span>
-      </div>
 
-      <!-- Account Credentials Table -->
-      <div class="overflow-x-auto">
-        <table class="w-full text-left font-body text-xs">
-          <thead>
-            <tr class="border-b border-border text-text-subtle font-code uppercase text-[10px] tracking-wider bg-surface-2">
-              <th class="py-2.5 px-4">Account Credential Identity</th>
-              <th class="py-2.5 px-4">Health Status</th>
-              <th class="py-2.5 px-4">Routing Slot</th>
-              <th class="py-2.5 px-4">Priority</th>
-              <th class="py-2.5 px-4 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-border/50 font-code">
-            {#each antigravityAccounts as conn, idx (conn.id)}
+        {#if customConnections.length === 0}
+          <div
+            class="p-6 rounded-[14px] border border-dashed border-border text-center text-xs text-text-muted"
+          >
+            No custom compatible endpoints registered yet. Click "+ Add OpenAI Compatible" or "+ Add Anthropic Compatible" above.
+          </div>
+        {:else}
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+            {#each customConnections as conn (conn.id)}
               {@const isActive = conn.isActive === 1}
               {@const latency = latencyMap[conn.id]}
 
-              <tr class="hover:bg-surface-2/40 transition">
-                <td class="py-3 px-4 text-text-main font-medium flex items-center gap-2.5">
-                  <div class="w-2 h-2 rounded-sm bg-brand-500"></div>
-                  <span>{conn.name || `account-${idx + 1}@gmail.com`}</span>
-                </td>
-                <td class="py-3 px-4">
-                  <span class="inline-flex items-center gap-1.5 text-[11px] {isActive ? 'text-success' : 'text-text-subtle'}">
-                    <span class="w-1.5 h-1.5 rounded-full {isActive ? 'bg-success' : 'bg-[#636c7e]'}"></span>
-                    <span>{isActive ? 'Active' : 'Disabled'}</span>
-                  </span>
-                </td>
-                <td class="py-3 px-4 text-info">
-                  Slot #{idx + 1}
-                </td>
-                <td class="py-3 px-4">
-                  <span class="px-2 py-0.5 rounded bg-bg border border-border text-[10px]">
-                    P{conn.priority || 1}
-                  </span>
-                </td>
-                <td class="py-3 px-4 text-right">
-                  <div class="flex items-center justify-end gap-1.5">
+              <div
+                class="p-4 rounded-[14px] bg-surface border border-border-subtle shadow-[var(--shadow-soft)] hover:shadow-[var(--shadow-warm)] transition flex flex-col justify-between gap-3"
+              >
+                <div class="flex items-start justify-between gap-2">
+                  <div class="flex items-center gap-2.5 min-w-0">
+                    <div
+                      class="size-8 rounded-[8px] bg-bg flex items-center justify-center font-bold text-xs font-code text-brand-500 flex-shrink-0"
+                    >
+                      {conn.provider.startsWith('anthropic') ? 'AN' : 'OA'}
+                    </div>
+                    <div class="min-w-0">
+                      <p class="font-semibold text-xs text-text-main truncate">
+                        {conn.name || conn.provider}
+                      </p>
+                      <p class="font-code text-[11px] text-text-muted truncate">
+                        {conn.baseUrl || 'endpoint'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <Badge tone={isActive ? 'success' : 'default'} class="text-[10px]">
+                    {isActive ? 'Active' : 'Disabled'}
+                  </Badge>
+                </div>
+
+                <div class="pt-2 border-t border-border-subtle flex items-center justify-between text-xs font-code">
+                  <div class="text-text-muted">
                     {#if latency === 'testing'}
-                      <Loader2 class="w-3.5 h-3.5 animate-spin text-info" />
+                      <Loader2 class="w-3 h-3 animate-spin text-info" />
                     {:else if typeof latency === 'number'}
-                      <span class="text-[10px] text-success font-bold">{latency}ms</span>
+                      <span class="text-success font-bold">{latency}ms</span>
                     {:else}
                       <button
                         type="button"
-                        onclick={() => handleTestPing(conn)}
-                        class="p-1 text-text-subtle hover:text-info transition cursor-pointer"
-                        title="Ping"
+                        onclick={() => handleTestPing(conn.id, conn.provider)}
+                        class="text-info hover:underline cursor-pointer"
                       >
-                        <Activity class="w-3.5 h-3.5" />
+                        Ping
                       </button>
                     {/if}
+                  </div>
 
+                  <div class="flex items-center gap-1">
                     <button
                       type="button"
-                      onclick={() => handleToggle(conn)}
-                      class="p-1 text-text-subtle hover:text-text-main transition cursor-pointer"
+                      onclick={() => handleToggleConnection(conn)}
+                      class="p-1 rounded text-text-subtle hover:text-text-main cursor-pointer"
                       title={isActive ? 'Disable' : 'Enable'}
                     >
-                      <Power class="w-3.5 h-3.5 {isActive ? 'text-success' : 'text-text-subtle'}" />
+                      <Power class="w-3.5 h-3.5 {isActive ? 'text-success' : ''}" />
                     </button>
-
                     <button
                       type="button"
-                      onclick={() => handleDelete(conn)}
-                      class="p-1 text-text-subtle hover:text-hover:text-danger transition cursor-pointer"
+                      onclick={() => handleDeleteConnection(conn)}
+                      class="p-1 rounded text-text-subtle hover:text-danger cursor-pointer"
                       title="Delete"
                     >
                       <Trash2 class="w-3.5 h-3.5" />
                     </button>
                   </div>
-                </td>
-              </tr>
+                </div>
+              </div>
             {/each}
-          </tbody>
-        </table>
+          </div>
+        {/if}
       </div>
+    {/if}
+  {/if}
 
-      <!-- Enroll link & Virtualized Models Bar -->
-      <div class="p-4 bg-surface-2 border-t border-border space-y-3">
-        <div class="flex items-center justify-between text-xs">
-          <button
-            type="button"
-            onclick={() => (isAntigravityModalOpen = true)}
-            class="text-info hover:underline font-semibold flex items-center gap-1 cursor-pointer"
-          >
-            <Plus class="w-3.5 h-3.5" />
-            <span>+ Enroll Additional OAuth Account</span>
-          </button>
-          <span class="font-code text-[10px] text-text-subtle">
-            Cluster load evenly distributed (16.6% slice / slot)
+  <!-- SECTION 1: OAuth Providers -->
+  {#if activeCategory === 'all' || activeCategory === 'oauth'}
+    {@const oauthItems = PROVIDER_CATALOG.filter((p) => p.category === 'oauth').filter(matchFilter)}
+    {#if oauthItems.length > 0}
+      <div class="space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <Shield class="w-4 h-4 text-info" />
+            <h3 class="text-base font-semibold text-text-main">OAuth Providers</h3>
+            <Badge tone="default">{oauthItems.length}</Badge>
+          </div>
+          <span class="text-xs text-text-subtle">
+            Multi-account rotation, Google Antigravity, Kiro, Codex, Cursor
           </span>
         </div>
 
-        <!-- Virtualized Model IDs Chips -->
-        <div class="pt-2 border-t border-border/60 space-y-2">
-          <div class="flex items-center justify-between text-[10px] font-code text-text-subtle">
-            <span class="uppercase tracking-wider">Virtualized Antigravity Model IDs</span>
-            <span>CLICK ID TO COPY ROUTE TARGET</span>
-          </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+          {#each oauthItems as item (item.id)}
+            {@const conns = connectionsByProvider.get(item.id) || []}
+            {@const activeConns = conns.filter((c) => c.isActive === 1)}
+            {@const isExpanded = !!expandedProviders[item.id]}
 
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-            {#each virtualGeminiModels as model (model.id)}
-              <div
-                role="button"
-                tabindex="0"
-                onclick={() => copyText(model.id, model.id)}
-                onkeydown={(e) => e.key === 'Enter' && copyText(model.id, model.id)}
-                class="p-2.5 rounded-lg bg-surface border border-border hover:border-brand-500/50 flex items-center justify-between cursor-pointer transition group"
-              >
-                <div>
-                  <div class="font-code text-xs font-bold text-text-main group-hover:text-brand-500">
-                    {model.id}
+            <div
+              class="rounded-[14px] bg-surface border border-border-subtle shadow-[var(--shadow-soft)] hover:shadow-[var(--shadow-warm)] transition flex flex-col justify-between overflow-hidden"
+            >
+              <div class="p-4 space-y-3">
+                <!-- Header -->
+                <div class="flex items-start justify-between gap-2">
+                  <div class="flex items-center gap-2.5 min-w-0">
+                    <div
+                      class="size-8 rounded-[8px] flex items-center justify-center font-bold text-xs font-code flex-shrink-0"
+                      style="background-color: {item.color}22; color: {item.color};"
+                    >
+                      {item.alias?.substring(0, 2).toUpperCase() || 'OA'}
+                    </div>
+                    <div class="min-w-0">
+                      <p class="font-semibold text-xs text-text-main truncate">{item.name}</p>
+                      <p class="font-code text-[11px] text-text-muted">
+                        /{item.alias}
+                      </p>
+                    </div>
                   </div>
-                  <div class="text-[10px] text-text-muted font-body">{model.name}</div>
+
+                  {#if conns.length > 0}
+                    <Badge tone="success" class="text-[10px]">
+                      {activeConns.length}/{conns.length} Connected
+                    </Badge>
+                  {:else}
+                    <Badge tone="default" class="text-[10px]">Not Connected</Badge>
+                  {/if}
                 </div>
-                {#if copiedId === model.id}
-                  <Check class="w-3.5 h-3.5 text-success" />
-                {:else}
-                  <Copy class="w-3.5 h-3.5 text-text-subtle group-hover:text-text-main" />
+
+                <!-- Expanded Accounts List -->
+                {#if isExpanded && conns.length > 0}
+                  <div class="space-y-1.5 pt-2 border-t border-border-subtle font-code text-[11px]">
+                    {#each conns as conn (conn.id)}
+                      {@const isActive = conn.isActive === 1}
+                      {@const latency = latencyMap[conn.id]}
+
+                      <div
+                        class="p-2 rounded-[8px] bg-surface-2 flex items-center justify-between gap-2"
+                      >
+                        <div class="min-w-0">
+                          <p class="text-xs text-text-main font-medium truncate">
+                            {conn.name || conn.email || conn.id.slice(0, 8)}
+                          </p>
+                          <span class="text-[10px] text-text-subtle">Slot P{conn.priority || 1}</span>
+                        </div>
+
+                        <div class="flex items-center gap-1.5 flex-shrink-0">
+                          {#if latency === 'testing'}
+                            <Loader2 class="w-3 h-3 animate-spin text-info" />
+                          {:else if typeof latency === 'number'}
+                            <span class="text-[10px] text-success font-bold">{latency}ms</span>
+                          {:else}
+                            <button
+                              type="button"
+                              onclick={() => handleTestPing(conn.id, conn.provider)}
+                              class="text-[10px] text-info hover:underline"
+                            >
+                              ping
+                            </button>
+                          {/if}
+
+                          <button
+                            type="button"
+                            onclick={() => handleToggleConnection(conn)}
+                            class="p-1 text-text-subtle hover:text-text-main"
+                            title={isActive ? 'Disable' : 'Enable'}
+                          >
+                            <Power class="w-3 h-3 {isActive ? 'text-success' : ''}" />
+                          </button>
+
+                          <button
+                            type="button"
+                            onclick={() => handleDeleteConnection(conn)}
+                            class="p-1 text-text-subtle hover:text-danger"
+                            title="Delete"
+                          >
+                            <Trash2 class="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
                 {/if}
               </div>
-            {/each}
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
 
-  <!-- SECTION 2: Custom Compatible Proxies (OpenAI / Anthropic Spec) -->
-  <div class="space-y-3">
-    <div class="flex items-center justify-between px-1">
-      <div class="flex items-center gap-2">
-        <Cpu class="w-4 h-4 text-brand-500" />
-        <h2 class="font-headline text-base font-bold text-text-main">
-          Custom Compatible Proxies (OpenAI / Anthropic Spec)
-        </h2>
-      </div>
-      <span class="font-code text-[11px] text-text-subtle">{customProxies.length} Configured Endpoints</span>
-    </div>
+              <!-- Footer action -->
+              <div
+                class="px-4 py-2 bg-surface-2 border-t border-border-subtle flex items-center justify-between text-xs"
+              >
+                {#if conns.length > 0}
+                  <button
+                    type="button"
+                    onclick={() => toggleExpand(item.id)}
+                    class="text-text-muted hover:text-text-main flex items-center gap-1 font-medium cursor-pointer"
+                  >
+                    {#if isExpanded}
+                      <ChevronDown class="w-3.5 h-3.5" />
+                      Hide Accounts
+                    {:else}
+                      <ChevronRight class="w-3.5 h-3.5" />
+                      View {conns.length} {conns.length === 1 ? 'Account' : 'Accounts'}
+                    {/if}
+                  </button>
+                {:else}
+                  <span class="text-[11px] text-text-subtle">OAuth Ready</span>
+                {/if}
 
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-      {#each customProxies as conn (conn.id)}
-        {@const isActive = conn.isActive === 1}
-        {@const latency = latencyMap[conn.id]}
-
-        <div
-          class="p-4 rounded-xl bg-surface border border-border hover:border-brand-500/40 transition flex flex-col justify-between gap-3 shadow-md"
-        >
-          <!-- Page header -->
-          <div class="flex items-start justify-between gap-2">
-            <div class="flex items-center gap-2.5">
-              <div class="w-8 h-8 rounded-lg bg-bg border border-border flex items-center justify-center font-bold text-xs font-code text-info">
-                {conn.provider.substring(0, 2).toUpperCase()}
-              </div>
-              <div>
-                <div class="font-code text-xs font-bold text-text-main truncate max-w-[140px]">
-                  {conn.name || conn.provider}
-                </div>
-                <div class="font-code text-[10px] text-text-subtle truncate max-w-[140px]">
-                  {conn.baseUrl || 'api.default.com'}
-                </div>
+                <Button variant="ghost" size="sm" onclick={() => openConnectModal(item)}>
+                  <Plus class="w-3 h-3" />
+                  {conns.length > 0 ? 'Add Another' : 'Connect'}
+                </Button>
               </div>
             </div>
-
-            <span class="font-code text-[9px] px-1.5 py-0.2 rounded {isActive
-              ? 'bg-success/10 text-success border border-success/20'
-              : 'bg-surface-2 text-text-subtle'}">
-              {isActive ? 'Connected' : 'Disabled'}
-            </span>
-          </div>
-
-          <!-- Metrics -->
-          <div class="space-y-1 font-code text-[11px] pt-1 border-t border-border/60">
-            <div class="flex items-center justify-between text-text-muted">
-              <span>Latency:</span>
-              {#if latency === 'testing'}
-                <Loader2 class="w-3 h-3 animate-spin text-info" />
-              {:else if typeof latency === 'number'}
-                <span class="text-success font-bold">{latency}ms</span>
-              {:else}
-                <button
-                  type="button"
-                  onclick={() => handleTestPing(conn)}
-                  class="text-info hover:underline cursor-pointer"
-                >
-                  Ping
-                </button>
-              {/if}
-            </div>
-            <div class="flex items-center justify-between text-text-muted">
-              <span>Priority:</span>
-              <span class="text-text-main font-semibold">P{conn.priority || 1}</span>
-            </div>
-          </div>
-
-          <!-- Bottom bar -->
-          <div class="flex items-center justify-between pt-1 border-t border-border/60">
-            <span class="font-code text-[9px] px-1.5 py-0.5 rounded bg-bg text-info border border-border uppercase">
-              {conn.provider.includes('anthropic') ? 'Anthropic API' : 'OpenAI API'}
-            </span>
-
-            <div class="flex items-center gap-1">
-              <button
-                type="button"
-                onclick={() => handleToggle(conn)}
-                class="p-1 rounded text-text-subtle hover:text-text-main cursor-pointer"
-                title={isActive ? 'Disable' : 'Enable'}
-              >
-                <Power class="w-3 h-3 {isActive ? 'text-success' : 'text-text-subtle'}" />
-              </button>
-              <button
-                type="button"
-                onclick={() => handleDelete(conn)}
-                class="p-1 rounded text-text-subtle hover:text-hover:text-danger cursor-pointer"
-                title="Delete"
-              >
-                <Trash2 class="w-3 h-3" />
-              </button>
-            </div>
-          </div>
-        </div>
-      {/each}
-
-      <!-- Add Compatible Proxy Card -->
-      <button
-        type="button"
-        onclick={() => openAddModal('openai')}
-        class="p-6 rounded-xl border border-dashed border-border hover:border-brand-500 bg-surface/40 hover:bg-surface flex flex-col items-center justify-center gap-2 transition cursor-pointer text-center group"
-      >
-        <div class="w-8 h-8 rounded-full bg-brand-500/10 text-brand-500 flex items-center justify-center group-hover:scale-110 transition">
-          <Plus class="w-4 h-4" />
-        </div>
-        <span class="font-headline text-xs font-bold text-text-main">Add Compatible Proxy</span>
-        <span class="font-body text-[10px] text-text-subtle">OpenAI / Anthropic REST endpoints</span>
-      </button>
-    </div>
-  </div>
-
-  <!-- SECTION 3: Free Tier & Community Ecosystem -->
-  <div class="space-y-3">
-    <div class="flex items-center justify-between px-1">
-      <div class="flex items-center gap-2">
-        <Sparkles class="w-4 h-4 text-success" />
-        <h2 class="font-headline text-base font-bold text-text-main">Free Tier & Community Ecosystem</h2>
-      </div>
-      <button
-        type="button"
-        onclick={handleTestAll}
-        class="font-code text-[11px] text-info hover:underline flex items-center gap-1 cursor-pointer"
-      >
-        <RefreshCw class="w-3 h-3" />
-        <span>Batch Ping Free Endpoints</span>
-      </button>
-    </div>
-
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-      <!-- Freebuff -->
-      <div class="p-3.5 rounded-xl bg-surface border border-border space-y-2">
-        <div class="flex items-center justify-between">
-          <span class="w-2 h-2 rounded-full bg-success"></span>
-          <span class="font-code text-[9px] px-1.5 py-0.2 rounded bg-success/15 text-success">Active Session</span>
-        </div>
-        <div>
-          <div class="font-headline text-xs font-bold text-text-main">Freebuff Free Cluster</div>
-          <div class="font-body text-[10px] text-text-muted">Daily Freebucks · Cost Mode Free</div>
-        </div>
-        <div class="flex items-center justify-between pt-1 border-t border-border/60 font-code text-[10px]">
-          <span class="text-text-subtle">Quota: Unlimited</span>
-          <button
-            type="button"
-            onclick={() => {
-              isFreebuffModalOpen = true
-              startFreebuffFlow()
-            }}
-            class="text-info hover:underline"
-          >
-            Pair CLI
-          </button>
+          {/each}
         </div>
       </div>
-
-      <!-- Gemini CLI -->
-      <div class="p-3.5 rounded-xl bg-surface border border-border space-y-2">
-        <div class="flex items-center justify-between">
-          <span class="w-2 h-2 rounded-full bg-info"></span>
-          <span class="font-code text-[9px] px-1.5 py-0.2 rounded bg-surface-2 text-text-muted">Direct</span>
-        </div>
-        <div>
-          <div class="font-headline text-xs font-bold text-text-main">Gemini CLI</div>
-          <div class="font-body text-[10px] text-text-muted">OAuth Direct Pipeline</div>
-        </div>
-        <div class="flex items-center justify-between pt-1 border-t border-border/60 font-code text-[10px]">
-          <span class="text-text-subtle">RTT: ~34ms</span>
-          <span class="text-success">Ready</span>
-        </div>
-      </div>
-
-      <!-- OpenRouter -->
-      <div class="p-3.5 rounded-xl bg-surface border border-border space-y-2">
-        <div class="flex items-center justify-between">
-          <span class="w-2 h-2 rounded-full bg-brand-500"></span>
-          <span class="font-code text-[9px] px-1.5 py-0.2 rounded bg-surface-2 text-text-muted">Aggregator</span>
-        </div>
-        <div>
-          <div class="font-headline text-xs font-bold text-text-main">OpenRouter Free</div>
-          <div class="font-body text-[10px] text-text-muted">Aggregated Free Models</div>
-        </div>
-        <div class="flex items-center justify-between pt-1 border-t border-border/60 font-code text-[10px]">
-          <span class="text-text-subtle">Credit: Free</span>
-          <span class="text-info">Idle</span>
-        </div>
-      </div>
-
-      <!-- NVIDIA NIM -->
-      <div class="p-3.5 rounded-xl bg-surface border border-border space-y-2">
-        <div class="flex items-center justify-between">
-          <span class="w-2 h-2 rounded-full bg-success"></span>
-          <span class="font-code text-[9px] px-1.5 py-0.2 rounded bg-surface-2 text-text-muted">Community</span>
-        </div>
-        <div>
-          <div class="font-headline text-xs font-bold text-text-main">NVIDIA NIM</div>
-          <div class="font-body text-[10px] text-text-muted">Llama-3-8B Free Pool</div>
-        </div>
-        <div class="flex items-center justify-between pt-1 border-t border-border/60 font-code text-[10px]">
-          <span class="text-text-subtle">Quota: 1k/day</span>
-          <span class="text-success">Active</span>
-        </div>
-      </div>
-
-      <!-- Vertex AI -->
-      <div class="p-3.5 rounded-xl bg-surface border border-border space-y-2">
-        <div class="flex items-center justify-between">
-          <span class="w-2 h-2 rounded-full bg-[#636c7e]"></span>
-          <span class="font-code text-[9px] px-1.5 py-0.2 rounded bg-surface-2 text-text-muted">GCP</span>
-        </div>
-        <div>
-          <div class="font-headline text-xs font-bold text-text-main">Vertex AI</div>
-          <div class="font-body text-[10px] text-text-muted">Cloud ADC Pipeline</div>
-        </div>
-        <div class="flex items-center justify-between pt-1 border-t border-border/60 font-code text-[10px]">
-          <span class="text-text-subtle">ADC Account</span>
-          <span class="text-text-muted">Setup</span>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- MODAL: Add Custom Provider (Mac-Style Window from Stitch) -->
-  {#if isAddOpen}
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
-      <div class="w-full max-w-lg p-6 rounded-2xl bg-surface-2 border border-border shadow-2xl flex flex-col gap-4">
-        <!-- Mac-style Window Top Controls & Title -->
-        <div class="flex items-center justify-between pb-2 border-b border-border">
-          <div class="flex items-center gap-2">
-            <button
-              type="button"
-              aria-label="Close dialog"
-              onclick={() => (isAddOpen = false)}
-              class="w-3 h-3 rounded-full bg-[#ff5f56] cursor-pointer"
-            ></button>
-            <div class="w-3 h-3 rounded-full bg-[#ffbd2e]"></div>
-            <div class="w-3 h-3 rounded-full bg-[#27c93f]"></div>
-            <span class="ml-2 font-headline text-sm font-bold text-text-main">
-              Add {addPreset === 'anthropic' ? 'Anthropic' : 'OpenAI'} Compatible Provider
-            </span>
-          </div>
-        </div>
-
-        <form onsubmit={handleAddSubmit} class="space-y-3 font-body text-xs">
-          <div>
-            <label for="display-name-input" class="block font-semibold text-text-muted mb-1">Display Name</label>
-            <input
-              id="display-name-input"
-              type="text"
-              placeholder="e.g. Anthropic Production Key"
-              bind:value={formName}
-              required
-              class="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 font-body text-xs text-text-main focus:outline-none focus:border-brand-500"
-            />
-          </div>
-
-          <div>
-            <label for="modal-provider-select" class="block font-semibold text-text-muted mb-1">Provider Protocol</label>
-            <select
-              id="modal-provider-select"
-              bind:value={formProvider}
-              class="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 font-body text-xs text-text-main focus:outline-none focus:border-brand-500"
-            >
-              <option value="openai">OpenAI Compatible (/v1/chat/completions)</option>
-              <option value="anthropic">Anthropic Compatible (/v1/messages)</option>
-              <option value="deepseek">DeepSeek Official</option>
-              <option value="groq">Groq High-Speed Cloud</option>
-              <option value="openrouter">OpenRouter Multi-Model Proxy</option>
-              <option value="ollama">Ollama Local Instance</option>
-            </select>
-          </div>
-
-          <div>
-            <label for="modal-base-url-input" class="block font-semibold text-text-muted mb-1">Base API URL</label>
-            <input
-              id="modal-base-url-input"
-              type="text"
-              placeholder="https://api.anthropic.com/v1"
-              bind:value={formBaseUrl}
-              class="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 font-code text-xs text-text-main focus:outline-none focus:border-brand-500"
-            />
-          </div>
-
-          <div>
-            <label for="modal-api-key-input" class="block font-semibold text-text-muted mb-1">API Key Secret *</label>
-            <input
-              id="modal-api-key-input"
-              type="password"
-              placeholder="sk-..."
-              bind:value={formApiKey}
-              required
-              class="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 font-code text-xs text-text-main focus:outline-none focus:border-brand-500"
-            />
-          </div>
-
-          <div>
-            <label for="modal-priority-select" class="block font-semibold text-text-muted mb-1">Failover Priority</label>
-            <select
-              id="modal-priority-select"
-              bind:value={formPriority}
-              class="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 font-code text-xs text-text-main focus:outline-none focus:border-brand-500"
-            >
-              <option value={1}>P1 - Primary Active</option>
-              <option value={2}>P2 - Secondary</option>
-              <option value={3}>P3 - Backup Cascade</option>
-            </select>
-          </div>
-
-          <div class="flex items-center justify-end gap-2 pt-3 border-t border-border">
-            <button
-              type="button"
-              onclick={() => (isAddOpen = false)}
-              class="px-4 py-2 rounded-lg text-text-muted hover:text-text-main cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              class="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 text-white font-bold shadow-md shadow-brand-500/25 cursor-pointer"
-            >
-              {#if isSubmitting}
-                <Loader2 class="w-3.5 h-3.5 animate-spin" />
-              {:else}
-                <Check class="w-3.5 h-3.5" />
-              {/if}
-              <span>Create Provider</span>
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+    {/if}
   {/if}
 
-  <!-- MODAL: Freebuff Device Flow (Stitch Style) -->
-  {#if isFreebuffModalOpen}
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
-      <div class="w-full max-w-md p-6 rounded-2xl bg-surface-2 border border-border shadow-2xl space-y-4">
-        <div class="flex items-center justify-between pb-2 border-b border-border">
+  <!-- SECTION 2: Free Providers (No auth needed) -->
+  {#if activeCategory === 'all' || activeCategory === 'free'}
+    {@const freeItems = PROVIDER_CATALOG.filter((p) => p.category === 'free').filter(matchFilter)}
+    {#if freeItems.length > 0}
+      <div class="space-y-3">
+        <div class="flex items-center justify-between">
           <div class="flex items-center gap-2">
-            <button
-              type="button"
-              aria-label="Close dialog"
-              onclick={() => (isFreebuffModalOpen = false)}
-              class="w-3 h-3 rounded-full bg-[#ff5f56] cursor-pointer"
-            ></button>
-            <div class="w-3 h-3 rounded-full bg-[#ffbd2e]"></div>
-            <div class="w-3 h-3 rounded-full bg-[#27c93f]"></div>
-            <span class="ml-2 font-headline text-sm font-bold text-text-main">
-              Freebuff CLI Device Pairing
-            </span>
+            <Sparkles class="w-4 h-4 text-success" />
+            <h3 class="text-base font-semibold text-text-main">Free Providers</h3>
+            <Badge tone="success">Zero Auth</Badge>
           </div>
+          <span class="text-xs text-text-subtle">
+            Available out-of-the-box without registration
+          </span>
         </div>
 
-        <div class="space-y-3 font-body text-xs">
-          <p class="text-text-muted leading-relaxed">
-            Pair with freebuff.com using device flow. A new browser tab has been launched. Log in and allow authorization.
-          </p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {#each freeItems as item (item.id)}
+            {@const conns = connectionsByProvider.get(item.id) || []}
 
-          <div class="p-3.5 rounded-xl bg-bg border border-border space-y-1.5 font-code text-xs">
-            <div class="text-text-subtle text-[10px] uppercase">Device Pairing Code</div>
-            <div class="text-info font-bold select-all tracking-wider">{fbAuthCode || 'Generating...'}</div>
-          </div>
-
-          <div class="flex items-center gap-2 p-3 rounded-xl bg-surface text-xs {fbStatus === 'success'
-            ? 'text-success bg-success/10 border border-success/20'
-            : fbStatus === 'error'
-              ? 'text-hover:text-danger bg-danger/10 border border-danger/25'
-              : 'text-text-muted'}">
-            {#if fbStatus === 'polling'}
-              <Loader2 class="w-4 h-4 animate-spin text-info flex-shrink-0" />
-            {:else if fbStatus === 'success'}
-              <Check class="w-4 h-4 text-success flex-shrink-0" />
-            {/if}
-            <span class="text-[11px]">{fbMessage}</span>
-          </div>
-
-          <div class="flex justify-end pt-2">
-            <button
-              type="button"
-              onclick={() => (isFreebuffModalOpen = false)}
-              class="px-4 py-2 rounded-lg bg-surface-3 hover:bg-surface-3 text-text-main font-semibold cursor-pointer"
+            <div
+              class="p-4 rounded-[14px] bg-surface border border-border-subtle shadow-[var(--shadow-soft)] flex flex-col justify-between gap-3"
             >
-              Done
-            </button>
-          </div>
+              <div class="flex items-start justify-between">
+                <div class="flex items-center gap-2.5">
+                  <div
+                    class="size-8 rounded-[8px] flex items-center justify-center font-bold text-xs font-code"
+                    style="background-color: {item.color}22; color: {item.color};"
+                  >
+                    {item.alias?.substring(0, 2).toUpperCase() || 'FR'}
+                  </div>
+                  <div>
+                    <p class="font-semibold text-xs text-text-main">{item.name}</p>
+                    <p class="font-code text-[11px] text-text-muted">/{item.alias}</p>
+                  </div>
+                </div>
+
+                <Badge tone="success" class="text-[10px]">Free</Badge>
+              </div>
+
+              <div class="pt-2 border-t border-border-subtle flex items-center justify-between text-xs">
+                <span class="text-text-subtle text-[11px]">Ready to route</span>
+                <Button variant="ghost" size="sm" onclick={() => openConnectModal(item)}>
+                  Configure
+                </Button>
+              </div>
+            </div>
+          {/each}
         </div>
       </div>
-    </div>
+    {/if}
   {/if}
 
-  <!-- MODAL: Antigravity Google OAuth (Stitch Style) -->
-  {#if isAntigravityModalOpen}
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
-      <div class="w-full max-w-md p-6 rounded-2xl bg-surface-2 border border-border shadow-2xl space-y-4">
-        <div class="flex items-center justify-between pb-2 border-b border-border">
+  <!-- SECTION 3: Free Tier Providers (Generous credit / tier) -->
+  {#if activeCategory === 'all' || activeCategory === 'freeTier'}
+    {@const freeTierItems = PROVIDER_CATALOG.filter((p) => p.category === 'freeTier').filter(matchFilter)}
+    {#if freeTierItems.length > 0}
+      <div class="space-y-3">
+        <div class="flex items-center justify-between">
           <div class="flex items-center gap-2">
-            <button
-              type="button"
-              aria-label="Close dialog"
-              onclick={() => (isAntigravityModalOpen = false)}
-              class="w-3 h-3 rounded-full bg-[#ff5f56] cursor-pointer"
-            ></button>
-            <div class="w-3 h-3 rounded-full bg-[#ffbd2e]"></div>
-            <div class="w-3 h-3 rounded-full bg-[#27c93f]"></div>
-            <span class="ml-2 font-headline text-sm font-bold text-text-main">
-              Google Antigravity OAuth
-            </span>
+            <Zap class="w-4 h-4 text-warning" />
+            <h3 class="text-base font-semibold text-text-main">Free Tier Providers</h3>
+            <Badge tone="warning">{freeTierItems.length}</Badge>
           </div>
+          <span class="text-xs text-text-subtle">
+            Generous recurring free quota (NVIDIA, Gemini CLI, Cloudflare, etc.)
+          </span>
         </div>
 
-        <div class="space-y-3 font-body text-xs">
-          <p class="text-text-muted leading-relaxed">
-            Authenticate a Google AI account to access Gemini 1.5/2.0 Pro and Flash models under Antigravity multi-account failover.
-          </p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+          {#each freeTierItems as item (item.id)}
+            {@const conns = connectionsByProvider.get(item.id) || []}
+            {@const isConnected = conns.length > 0}
 
-          <a
-            href="/api/oauth/antigravity/login"
-            class="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-brand-500 hover:bg-brand-600 text-white font-bold shadow-md shadow-brand-500/25 transition cursor-pointer"
-          >
-            <Globe class="w-4 h-4" />
-            <span>Launch Google OAuth Login</span>
-          </a>
-
-          <div class="flex justify-end pt-2">
-            <button
-              type="button"
-              onclick={() => (isAntigravityModalOpen = false)}
-              class="px-4 py-1.5 rounded-lg text-text-subtle hover:text-text-main cursor-pointer"
+            <div
+              class="p-4 rounded-[14px] bg-surface border border-border-subtle shadow-[var(--shadow-soft)] flex flex-col justify-between gap-3"
             >
-              Cancel
-            </button>
-          </div>
+              <div class="flex items-start justify-between">
+                <div class="flex items-center gap-2.5 min-w-0">
+                  <div
+                    class="size-8 rounded-[8px] flex items-center justify-center font-bold text-xs font-code flex-shrink-0"
+                    style="background-color: {item.color}22; color: {item.color};"
+                  >
+                    {item.alias?.substring(0, 2).toUpperCase() || 'FT'}
+                  </div>
+                  <div class="min-w-0">
+                    <p class="font-semibold text-xs text-text-main truncate">{item.name}</p>
+                    <p class="font-code text-[11px] text-text-muted">/{item.alias}</p>
+                  </div>
+                </div>
+
+                {#if isConnected}
+                  <Badge tone="success" class="text-[10px]">
+                    {conns.length} Connected
+                  </Badge>
+                {:else}
+                  <Badge tone="default" class="text-[10px]">Available</Badge>
+                {/if}
+              </div>
+
+              <div class="pt-2 border-t border-border-subtle flex items-center justify-between text-xs">
+                <span class="text-[11px] text-text-subtle font-code">
+                  {isConnected ? `${conns.filter((c) => c.isActive === 1).length} active` : 'Free Quota'}
+                </span>
+
+                <Button variant="ghost" size="sm" onclick={() => openConnectModal(item)}>
+                  {isConnected ? 'Add Key' : 'Connect'}
+                </Button>
+              </div>
+            </div>
+          {/each}
         </div>
       </div>
-    </div>
+    {/if}
+  {/if}
+
+  <!-- SECTION 4: API Key Providers -->
+  {#if activeCategory === 'all' || activeCategory === 'apikey'}
+    {@const apikeyItems = PROVIDER_CATALOG.filter((p) => p.category === 'apikey').filter(matchFilter)}
+    {@const visibleItems = showAllApiKey ? apikeyItems : apikeyItems.slice(0, 20)}
+    {#if apikeyItems.length > 0}
+      <div class="space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <Key class="w-4 h-4 text-brand-500" />
+            <h3 class="text-base font-semibold text-text-main">API Key Providers</h3>
+            <Badge tone="default">{apikeyItems.length}</Badge>
+          </div>
+          <span class="text-xs text-text-subtle">
+            Commercial and cloud endpoints (OpenAI, Anthropic, DeepSeek, Groq, etc.)
+          </span>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+          {#each visibleItems as item (item.id)}
+            {@const conns = connectionsByProvider.get(item.id) || []}
+            {@const isConnected = conns.length > 0}
+            {@const isExpanded = !!expandedProviders[item.id]}
+
+            <div
+              class="rounded-[14px] bg-surface border border-border-subtle shadow-[var(--shadow-soft)] hover:shadow-[var(--shadow-warm)] transition flex flex-col justify-between overflow-hidden"
+            >
+              <div class="p-4 space-y-3">
+                <div class="flex items-start justify-between gap-2">
+                  <div class="flex items-center gap-2.5 min-w-0">
+                    <div
+                      class="size-8 rounded-[8px] flex items-center justify-center font-bold text-xs font-code flex-shrink-0"
+                      style="background-color: {item.color}22; color: {item.color};"
+                    >
+                      {item.alias?.substring(0, 2).toUpperCase() || 'AK'}
+                    </div>
+                    <div class="min-w-0">
+                      <p class="font-semibold text-xs text-text-main truncate">{item.name}</p>
+                      <p class="font-code text-[11px] text-text-muted">/{item.alias}</p>
+                    </div>
+                  </div>
+
+                  {#if isConnected}
+                    <Badge tone="success" class="text-[10px]">
+                      {conns.length} Connected
+                    </Badge>
+                  {:else}
+                    <Badge tone="default" class="text-[10px]">Ready</Badge>
+                  {/if}
+                </div>
+
+                <!-- Expanded account rows -->
+                {#if isExpanded && conns.length > 0}
+                  <div class="space-y-1.5 pt-2 border-t border-border-subtle font-code text-[11px]">
+                    {#each conns as conn (conn.id)}
+                      {@const isActive = conn.isActive === 1}
+                      {@const latency = latencyMap[conn.id]}
+
+                      <div
+                        class="p-2 rounded-[8px] bg-surface-2 flex items-center justify-between gap-2"
+                      >
+                        <span class="truncate font-medium text-text-main text-xs">
+                          {conn.name || 'Key'} (P{conn.priority || 1})
+                        </span>
+
+                        <div class="flex items-center gap-1.5 flex-shrink-0">
+                          {#if latency === 'testing'}
+                            <Loader2 class="w-3 h-3 animate-spin text-info" />
+                          {:else if typeof latency === 'number'}
+                            <span class="text-[10px] text-success font-bold">{latency}ms</span>
+                          {:else}
+                            <button
+                              type="button"
+                              onclick={() => handleTestPing(conn.id, conn.provider)}
+                              class="text-[10px] text-info hover:underline"
+                            >
+                              ping
+                            </button>
+                          {/if}
+
+                          <button
+                            type="button"
+                            onclick={() => handleToggleConnection(conn)}
+                            class="p-1 text-text-subtle hover:text-text-main"
+                            title={isActive ? 'Disable' : 'Enable'}
+                          >
+                            <Power class="w-3 h-3 {isActive ? 'text-success' : ''}" />
+                          </button>
+
+                          <button
+                            type="button"
+                            onclick={() => handleDeleteConnection(conn)}
+                            class="p-1 text-text-subtle hover:text-danger"
+                            title="Delete"
+                          >
+                            <Trash2 class="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+
+              <div
+                class="px-4 py-2 bg-surface-2 border-t border-border-subtle flex items-center justify-between text-xs"
+              >
+                {#if conns.length > 0}
+                  <button
+                    type="button"
+                    onclick={() => toggleExpand(item.id)}
+                    class="text-text-muted hover:text-text-main flex items-center gap-1 cursor-pointer font-medium"
+                  >
+                    {#if isExpanded}
+                      <ChevronDown class="w-3.5 h-3.5" />
+                      Hide Keys
+                    {:else}
+                      <ChevronRight class="w-3.5 h-3.5" />
+                      View ({conns.length})
+                    {/if}
+                  </button>
+                {:else}
+                  <span class="text-[11px] text-text-subtle font-code">Not configured</span>
+                {/if}
+
+                <Button variant="ghost" size="sm" onclick={() => openConnectModal(item)}>
+                  <Plus class="w-3 h-3" />
+                  {isConnected ? 'Add Key' : 'Add Key'}
+                </Button>
+              </div>
+            </div>
+          {/each}
+        </div>
+
+        {#if apikeyItems.length > 20}
+          <div class="text-center pt-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onclick={() => (showAllApiKey = !showAllApiKey)}
+            >
+              {showAllApiKey ? 'Show Less' : `Show All ${apikeyItems.length} Providers`}
+            </Button>
+          </div>
+        {/if}
+      </div>
+    {/if}
+  {/if}
+
+  <!-- SECTION 5: Web Cookie Providers -->
+  {#if activeCategory === 'all' || activeCategory === 'webCookie'}
+    {@const cookieItems = PROVIDER_CATALOG.filter((p) => p.category === 'webCookie').filter(matchFilter)}
+    {#if cookieItems.length > 0}
+      <div class="space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <Globe class="w-4 h-4 text-text-muted" />
+            <h3 class="text-base font-semibold text-text-main">Web Cookie Providers</h3>
+            <Badge tone="default">{cookieItems.length}</Badge>
+          </div>
+          <span class="text-xs text-text-subtle">
+            Browser cookie session authentication (iFlow, etc.)
+          </span>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {#each cookieItems as item (item.id)}
+            {@const conns = connectionsByProvider.get(item.id) || []}
+
+            <div
+              class="p-4 rounded-[14px] bg-surface border border-border-subtle shadow-[var(--shadow-soft)] flex flex-col justify-between gap-3"
+            >
+              <div class="flex items-start justify-between">
+                <div class="flex items-center gap-2.5">
+                  <div
+                    class="size-8 rounded-[8px] flex items-center justify-center font-bold text-xs font-code"
+                    style="background-color: {item.color}22; color: {item.color};"
+                  >
+                    {item.alias?.substring(0, 2).toUpperCase() || 'CK'}
+                  </div>
+                  <div>
+                    <p class="font-semibold text-xs text-text-main">{item.name}</p>
+                    <p class="font-code text-[11px] text-text-muted">/{item.alias}</p>
+                  </div>
+                </div>
+
+                <Badge tone={conns.length > 0 ? 'success' : 'default'} class="text-[10px]">
+                  {conns.length > 0 ? `${conns.length} Connected` : 'Cookie'}
+                </Badge>
+              </div>
+
+              <div class="pt-2 border-t border-border-subtle flex items-center justify-between text-xs">
+                <span class="text-[11px] text-text-subtle">Session auth</span>
+                <Button variant="ghost" size="sm" onclick={() => openConnectModal(item)}>
+                  Configure
+                </Button>
+              </div>
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
   {/if}
 </div>
+
+<!-- MODAL: Connect API Key -->
+{#if isConnectKeyOpen && connectTargetProvider}
+  <div
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+  >
+    <div
+      class="w-full max-w-md p-6 rounded-[14px] bg-surface border border-border shadow-[var(--shadow-elev)] space-y-4"
+    >
+      <div class="flex items-center justify-between pb-3 border-b border-border-subtle">
+        <div class="flex items-center gap-2.5">
+          <div
+            class="size-8 rounded-[8px] flex items-center justify-center font-bold text-xs font-code"
+            style="background-color: {connectTargetProvider.color}22; color: {connectTargetProvider.color};"
+          >
+            {connectTargetProvider.alias?.substring(0, 2).toUpperCase()}
+          </div>
+          <div>
+            <h4 class="font-semibold text-sm text-text-main">
+              Connect {connectTargetProvider.name}
+            </h4>
+            <p class="text-xs text-text-muted font-code">/{connectTargetProvider.alias}</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onclick={() => (isConnectKeyOpen = false)}
+          class="text-text-muted hover:text-text-main text-xs"
+        >
+          ✕
+        </button>
+      </div>
+
+      <form onsubmit={handleSaveKeyConnection} class="space-y-3 text-xs font-body">
+        <div>
+          <label for="key-name-input" class="block font-semibold text-text-muted mb-1">Connection Label</label>
+          <input
+            id="key-name-input"
+            type="text"
+            placeholder="e.g. Production Key"
+            bind:value={formName}
+            class="w-full bg-surface-2 border border-border-subtle rounded-[8px] px-3 py-2 text-text-main focus:outline-none focus:border-brand-500/50"
+          />
+        </div>
+
+        <div>
+          <label for="key-secret-input" class="block font-semibold text-text-muted mb-1">API Key Secret *</label>
+          <input
+            id="key-secret-input"
+            type="password"
+            placeholder="sk-..."
+            bind:value={formApiKey}
+            required
+            class="w-full bg-surface-2 border border-border-subtle rounded-[8px] px-3 py-2 font-code text-text-main focus:outline-none focus:border-brand-500/50"
+          />
+        </div>
+
+        <div>
+          <label for="key-url-input" class="block font-semibold text-text-muted mb-1">Custom Base URL (Optional)</label>
+          <input
+            id="key-url-input"
+            type="text"
+            placeholder="Leave blank for official provider endpoint"
+            bind:value={formBaseUrl}
+            class="w-full bg-surface-2 border border-border-subtle rounded-[8px] px-3 py-2 font-code text-text-main focus:outline-none focus:border-brand-500/50"
+          />
+        </div>
+
+        <div>
+          <label for="key-prio-select" class="block font-semibold text-text-muted mb-1">Priority (Routing Order)</label>
+          <select
+            id="key-prio-select"
+            bind:value={formPriority}
+            class="w-full bg-surface-2 border border-border-subtle rounded-[8px] px-3 py-2 font-code text-text-main focus:outline-none"
+          >
+            <option value={1}>P1 - Primary Active</option>
+            <option value={2}>P2 - Secondary</option>
+            <option value={3}>P3 - Backup Cascade</option>
+          </select>
+        </div>
+
+        <div class="flex items-center justify-end gap-2 pt-3 border-t border-border-subtle">
+          <Button variant="ghost" size="sm" onclick={() => (isConnectKeyOpen = false)}>
+            Cancel
+          </Button>
+          <Button variant="primary" size="sm" disabled={isSubmitting}>
+            {#if isSubmitting}
+              <Loader2 class="w-3.5 h-3.5 animate-spin" />
+            {:else}
+              <Check class="w-3.5 h-3.5" />
+            {/if}
+            Save Connection
+          </Button>
+        </div>
+      </form>
+    </div>
+  </div>
+{/if}
+
+<!-- MODAL: Add Compatible Custom Endpoint -->
+{#if isAddCompatibleOpen}
+  <div
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+  >
+    <div
+      class="w-full max-w-md p-6 rounded-[14px] bg-surface border border-border shadow-[var(--shadow-elev)] space-y-4"
+    >
+      <div class="flex items-center justify-between pb-3 border-b border-border-subtle">
+        <h4 class="font-semibold text-sm text-text-main">
+          Add {compatiblePreset === 'anthropic' ? 'Anthropic' : 'OpenAI'} Compatible Endpoint
+        </h4>
+        <button
+          type="button"
+          onclick={() => (isAddCompatibleOpen = false)}
+          class="text-text-muted hover:text-text-main text-xs"
+        >
+          ✕
+        </button>
+      </div>
+
+      <form onsubmit={handleSaveCompatible} class="space-y-3 text-xs font-body">
+        <div>
+          <label for="comp-name" class="block font-semibold text-text-muted mb-1">Display Name</label>
+          <input
+            id="comp-name"
+            type="text"
+            placeholder="e.g. My Custom Proxy"
+            bind:value={formName}
+            required
+            class="w-full bg-surface-2 border border-border-subtle rounded-[8px] px-3 py-2 text-text-main focus:outline-none focus:border-brand-500/50"
+          />
+        </div>
+
+        <div>
+          <label for="comp-url" class="block font-semibold text-text-muted mb-1">Base API URL *</label>
+          <input
+            id="comp-url"
+            type="text"
+            placeholder="https://my-proxy.com/v1"
+            bind:value={formBaseUrl}
+            required
+            class="w-full bg-surface-2 border border-border-subtle rounded-[8px] px-3 py-2 font-code text-text-main focus:outline-none focus:border-brand-500/50"
+          />
+        </div>
+
+        <div>
+          <label for="comp-key" class="block font-semibold text-text-muted mb-1">API Key *</label>
+          <input
+            id="comp-key"
+            type="password"
+            placeholder="sk-..."
+            bind:value={formApiKey}
+            required
+            class="w-full bg-surface-2 border border-border-subtle rounded-[8px] px-3 py-2 font-code text-text-main focus:outline-none focus:border-brand-500/50"
+          />
+        </div>
+
+        <div>
+          <label for="comp-prio" class="block font-semibold text-text-muted mb-1">Priority</label>
+          <select
+            id="comp-prio"
+            bind:value={formPriority}
+            class="w-full bg-surface-2 border border-border-subtle rounded-[8px] px-3 py-2 font-code text-text-main focus:outline-none"
+          >
+            <option value={1}>P1 - Primary</option>
+            <option value={2}>P2 - Secondary</option>
+            <option value={3}>P3 - Backup</option>
+          </select>
+        </div>
+
+        <div class="flex items-center justify-end gap-2 pt-3 border-t border-border-subtle">
+          <Button variant="ghost" size="sm" onclick={() => (isAddCompatibleOpen = false)}>
+            Cancel
+          </Button>
+          <Button variant="primary" size="sm" disabled={isSubmitting}>
+            {#if isSubmitting}
+              <Loader2 class="w-3.5 h-3.5 animate-spin" />
+            {:else}
+              <Check class="w-3.5 h-3.5" />
+            {/if}
+            Save Endpoint
+          </Button>
+        </div>
+      </form>
+    </div>
+  </div>
+{/if}
+
+<!-- MODAL: Antigravity Google OAuth -->
+{#if isAntigravityModalOpen}
+  <div
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+  >
+    <div
+      class="w-full max-w-md p-6 rounded-[14px] bg-surface border border-border shadow-[var(--shadow-elev)] space-y-4"
+    >
+      <div class="flex items-center justify-between pb-3 border-b border-border-subtle">
+        <h4 class="font-semibold text-sm text-text-main">Google Antigravity OAuth</h4>
+        <button
+          type="button"
+          onclick={() => (isAntigravityModalOpen = false)}
+          class="text-text-muted hover:text-text-main text-xs"
+        >
+          ✕
+        </button>
+      </div>
+
+      <div class="space-y-3 text-xs text-text-muted">
+        <p>
+          Authenticate your Google account to access Gemini 1.5/2.0 Pro and Flash models under Antigravity multi-account failover.
+        </p>
+
+        <a
+          href="/api/oauth/antigravity/login"
+          class="flex items-center justify-center gap-2 w-full py-2.5 rounded-[10px] bg-brand-500 hover:bg-brand-600 text-white font-bold transition shadow-[var(--shadow-warm)]"
+        >
+          <Globe class="w-4 h-4" />
+          <span>Launch Google OAuth Login</span>
+        </a>
+
+        <div class="flex justify-end pt-2">
+          <Button variant="ghost" size="sm" onclick={() => (isAntigravityModalOpen = false)}>
+            Cancel
+          </Button>
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- MODAL: Freebuff Device Flow -->
+{#if isFreebuffModalOpen}
+  <div
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+  >
+    <div
+      class="w-full max-w-md p-6 rounded-[14px] bg-surface border border-border shadow-[var(--shadow-elev)] space-y-4"
+    >
+      <div class="flex items-center justify-between pb-3 border-b border-border-subtle">
+        <h4 class="font-semibold text-sm text-text-main">Freebuff Device Flow</h4>
+        <button
+          type="button"
+          onclick={() => (isFreebuffModalOpen = false)}
+          class="text-text-muted hover:text-text-main text-xs"
+        >
+          ✕
+        </button>
+      </div>
+
+      <div class="space-y-3 text-xs font-body">
+        <p class="text-text-muted">
+          Authorize token via Freebuff. A new tab has been opened.
+        </p>
+
+        <div class="p-3 rounded-[8px] bg-surface-2 border border-border font-code">
+          <span class="text-[10px] text-text-subtle uppercase block">Pairing Code</span>
+          <span class="text-info font-bold tracking-wider select-all">
+            {fbAuthCode || 'Generating...'}
+          </span>
+        </div>
+
+        <div
+          class="p-3 rounded-[8px] flex items-center gap-2 {fbStatus === 'success'
+            ? 'bg-success/10 text-success'
+            : fbStatus === 'error'
+              ? 'bg-danger/10 text-danger'
+              : 'bg-surface-2 text-text-muted'}"
+        >
+          {#if fbStatus === 'polling'}
+            <Loader2 class="w-3.5 h-3.5 animate-spin text-info" />
+          {:else if fbStatus === 'success'}
+            <Check class="w-3.5 h-3.5 text-success" />
+          {/if}
+          <span>{fbMessage}</span>
+        </div>
+
+        <div class="flex justify-end pt-2">
+          <Button variant="secondary" size="sm" onclick={() => (isFreebuffModalOpen = false)}>
+            Done
+          </Button>
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}

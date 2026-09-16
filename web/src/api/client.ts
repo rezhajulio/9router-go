@@ -192,6 +192,11 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(modelIds),
     }),
+  testModel: (model: string) =>
+    request<{ ok: boolean; error?: string }>('/api/models/test', {
+      method: 'POST',
+      body: JSON.stringify({ model }),
+    }),
 
   // Settings
   getSettings: () => request<Record<string, any>>('/api/settings'),
@@ -213,6 +218,7 @@ export const api = {
       body: JSON.stringify({ fingerprintId, fingerprintHash }),
     }),
   getAntigravityAuthorizeUrl: () => request<{ url: string; redirectUrl: string; state: string }>('/api/oauth/antigravity/authorize'),
+  getSystemVersion: () => request<{ currentVersion: string; latestVersion?: string }>('/api/version'),
 
   // Usage & Telemetry
   getUsageStats: (period = 'today') => request<any>(`/api/usage/stats?period=${encodeURIComponent(period)}`),

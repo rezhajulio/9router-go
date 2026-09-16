@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"time"
@@ -896,4 +897,52 @@ func (h *ChatHandler) HandleOllamaChat(w http.ResponseWriter, r *http.Request) {
 	newReq, _ := http.NewRequestWithContext(r.Context(), "POST", "/v1/chat/completions", bytes.NewReader(body))
 	newReq.Header = r.Header
 	h.HandleChatCompletions(w, newReq)
+}
+
+// HandleTestModel handles POST /api/models/test to ping a model.
+func (h *ChatHandler) HandleTestModel(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		handlerutil.WriteJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "failed to read body"})
+		return
+	}
+	defer r.Body.Close()
+
+	var req struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil || req.Model == "" {
+		handlerutil.WriteJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "Model required"})
+		return
+	}
+
+	payload := map[string]any{
+		"model": req.Model,
+		"messages": []map[string]string{
+			{"role": "user", "content": "hi"},
+		},
+		"max_tokens": 1,
+		"stream":     false,
+	}
+	b, _ := json.Marshal(payload)
+
+	testReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(b))
+	testReq.Header.Set("Content-Type", "application/json")
+	if auth := r.Header.Get("Authorization"); auth != "" {
+		testReq.Header.Set("Authorization", auth)
+	}
+	rec := httptest.NewRecorder()
+	h.HandleChatCompletions(rec, testReq)
+
+	if rec.Code == http.StatusOK {
+		handlerutil.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+	} else {
+		errMsg := rec.Body.String()
+		if rec.Code == http.StatusTooManyRequests {
+			errMsg = "429: Rate limit or quota exhausted"
+		} else if rec.Code == http.StatusUnauthorized {
+			errMsg = "401: Unauthorized / Invalid key"
+		}
+		handlerutil.WriteJSON(w, http.StatusOK, map[string]any{"ok": false, "error": errMsg})
+	}
 }

@@ -56,6 +56,8 @@ func SetupRoutes(r interface {
 	r.Get("/api/v1/models/*", chatH.HandleModelLookup)
 	r.Get("/api/models/catalog-sync", chatH.HandleCatalogSyncStatus)
 	r.Post("/api/models/catalog-sync", chatH.HandleCatalogSyncTrigger)
+	r.Get("/api/models", chatH.HandleModels)
+	r.Post("/api/models/test", chatH.HandleTestModel)
 	r.Post("/chat/completions", chatH.HandleChatCompletions)
 	r.Post("/messages", chatH.HandleMessages)
 	r.Post("/messages/count_tokens", chatH.HandleCountTokens)

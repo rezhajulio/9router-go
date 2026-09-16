@@ -3,21 +3,29 @@
     Activity,
     AlertTriangle,
     ArrowLeft,
+    Bot,
     Check,
+    CheckCircle2,
     ChevronDown,
     ChevronUp,
     Copy,
     ExternalLink,
+    Eye,
+    FlaskConical,
     Key,
+    Loader2,
     Lock,
     PauseCircle,
     Play,
     Plus,
     RefreshCw,
+    RotateCcw,
     Search,
     Server,
+    Sparkles,
     Trash2,
     X,
+    XCircle,
   } from 'lucide-svelte'
   import { api, type ProviderConnection, type ProviderNode } from '../api/client'
   import Badge from '../lib/ui/Badge.svelte'
@@ -25,6 +33,7 @@
   import Card from '../lib/ui/Card.svelte'
   import Toggle from '../lib/ui/Toggle.svelte'
   import { PROVIDER_CATALOG, type ProviderCatalogItem } from '../lib/providers'
+  import { getModelsByProviderId, getModelCaps, PROVIDER_ID_TO_ALIAS } from '../lib/models'
 
   let {
     connections = [],
@@ -212,6 +221,240 @@
   let selectedConnections = $derived(
     selectedProviderId ? connections.filter((c) => c.provider === selectedProviderId) : []
   )
+
+  // Models state for Provider Detail
+  let customModels = $state<any[]>([])
+  let modelAliases = $state<Record<string, string>>({})
+  let disabledModelIds = $state<string[]>([])
+  let testingModelIds = $state<Set<string>>(new Set())
+  let modelTestResults = $state<Record<string, 'ok' | 'error'>>({})
+  let modelsTestError = $state<string>('')
+  let showAddCustomModelModal = $state(false)
+  let newCustomModelId = $state('')
+  let newCustomModelName = $state('')
+  let copiedModelId = $state<string | null>(null)
+  let thinkingMode = $state<string>('auto')
+
+  let currentStorageAlias = $derived(
+    selectedNode
+      ? selectedNode.id
+      : selectedCatalogItem?.alias ||
+        (selectedProviderId ? PROVIDER_ID_TO_ALIAS[selectedProviderId] : '') ||
+        selectedProviderId ||
+        ''
+  )
+
+  let currentDisplayAlias = $derived(
+    selectedNode
+      ? selectedNode.id
+      : selectedCatalogItem?.alias ||
+        (selectedProviderId ? PROVIDER_ID_TO_ALIAS[selectedProviderId] : '') ||
+        selectedProviderId ||
+        ''
+  )
+
+  let builtInModels = $derived(
+    selectedProviderId ? getModelsByProviderId(selectedProviderId) : []
+  )
+
+  let providerCustomModels = $derived(
+    customModels.filter(
+      (m) =>
+        m.providerAlias === currentStorageAlias ||
+        m.providerAlias === selectedProviderId
+    )
+  )
+
+  let allAvailableModels = $derived.by(() => {
+    const list: Array<{
+      id: string
+      name?: string
+      isCustom?: boolean
+      caps: { vision: boolean; reasoning: boolean }
+    }> = []
+    const seen = new Set<string>()
+
+    // Custom models first
+    for (const cm of providerCustomModels) {
+      if (!cm.id || seen.has(cm.id)) continue
+      seen.add(cm.id)
+      list.push({
+        id: cm.id,
+        name: cm.name || cm.id,
+        isCustom: true,
+        caps: getModelCaps(cm.id, cm),
+      })
+    }
+
+    // Built-in models
+    for (const bm of builtInModels) {
+      if (!bm.id || seen.has(bm.id)) continue
+      seen.add(bm.id)
+      list.push({
+        id: bm.id,
+        name: bm.name,
+        isCustom: false,
+        caps: getModelCaps(bm.id, bm),
+      })
+    }
+
+    return list
+  })
+
+  let displayModels = $derived(
+    allAvailableModels.filter((m) => !disabledModelIds.includes(m.id))
+  )
+
+  let disabledDisplayModels = $derived(
+    allAvailableModels.filter((m) => disabledModelIds.includes(m.id))
+  )
+
+  let hasReasoningModels = $derived(
+    allAvailableModels.some((m) => m.caps.reasoning)
+  )
+
+  async function loadProviderModelsData(providerId: string, storageAlias: string) {
+    try {
+      const [customs, aliases, disabled] = await Promise.all([
+        api.getCustomModels().catch(() => ({})),
+        api.getModelAliases().catch(() => ({})),
+        api.getDisabledModels().catch(() => ({})),
+      ])
+
+      if (Array.isArray(customs)) {
+        customModels = customs
+      } else if (customs && typeof customs === 'object') {
+        customModels = Object.entries(customs).map(([k, v]: [string, any]) => {
+          if (typeof v === 'object' && v !== null) return { id: k, ...v }
+          return { id: k, name: String(v) }
+        })
+      } else {
+        customModels = []
+      }
+
+      modelAliases = aliases || {}
+
+      const disArr =
+        (disabled && (disabled as any)[storageAlias]) ||
+        (disabled && (disabled as any)[providerId]) ||
+        []
+      disabledModelIds = Array.isArray(disArr) ? disArr : []
+    } catch (err) {
+      console.error('Failed to load provider models:', err)
+    }
+  }
+
+  $effect(() => {
+    if (selectedProviderId) {
+      const storageAlias = selectedNode
+        ? selectedNode.id
+        : selectedCatalogItem?.alias ||
+          PROVIDER_ID_TO_ALIAS[selectedProviderId] ||
+          selectedProviderId
+      loadProviderModelsData(selectedProviderId, storageAlias)
+    }
+  })
+
+  async function handleTestModel(modelId: string, fullModel: string) {
+    if (testingModelIds.has(modelId)) return
+    testingModelIds = new Set([...testingModelIds, modelId])
+    modelsTestError = ''
+    try {
+      const res = await api.testModel(fullModel)
+      modelTestResults = { ...modelTestResults, [modelId]: res.ok ? 'ok' : 'error' }
+      if (!res.ok) {
+        modelsTestError = res.error || 'Model not reachable'
+      }
+    } catch (err) {
+      modelTestResults = { ...modelTestResults, [modelId]: 'error' }
+      modelsTestError = err instanceof Error ? err.message : 'Network error'
+    } finally {
+      const next = new Set(testingModelIds)
+      next.delete(modelId)
+      testingModelIds = next
+    }
+  }
+
+  async function handleDisableModel(modelId: string) {
+    if (!currentStorageAlias) return
+    const next = [...new Set([...disabledModelIds, modelId])]
+    disabledModelIds = next
+    try {
+      await api.saveDisabledModels(currentStorageAlias, next)
+    } catch (err) {
+      console.error('Failed to save disabled models:', err)
+    }
+  }
+
+  async function handleEnableModel(modelId: string) {
+    if (!currentStorageAlias) return
+    const next = disabledModelIds.filter((id) => id !== modelId)
+    disabledModelIds = next
+    try {
+      await api.saveDisabledModels(currentStorageAlias, next)
+    } catch (err) {
+      console.error('Failed to save disabled models:', err)
+    }
+  }
+
+  async function handleDisableAll() {
+    if (!currentStorageAlias) return
+    const allIds = allAvailableModels.map((m) => m.id)
+    disabledModelIds = allIds
+    try {
+      await api.saveDisabledModels(currentStorageAlias, allIds)
+    } catch (err) {
+      console.error('Failed to disable all models:', err)
+    }
+  }
+
+  async function handleEnableAll() {
+    if (!currentStorageAlias) return
+    disabledModelIds = []
+    try {
+      await api.saveDisabledModels(currentStorageAlias, [])
+    } catch (err) {
+      console.error('Failed to enable all models:', err)
+    }
+  }
+
+  function copyModel(fullModel: string, modelId: string) {
+    const model = allAvailableModels.find((m) => m.id === modelId)
+    const isReasoning = model?.caps.reasoning ?? false
+    const textToCopy =
+      isReasoning && thinkingMode && thinkingMode !== 'auto'
+        ? `${fullModel}(${thinkingMode})`
+        : fullModel
+    navigator.clipboard.writeText(textToCopy)
+    copiedModelId = modelId
+    setTimeout(() => {
+      if (copiedModelId === modelId) copiedModelId = null
+    }, 2000)
+  }
+
+  async function submitAddCustomModel() {
+    if (!newCustomModelId.trim() || !currentStorageAlias) return
+    isSubmitting = true
+    try {
+      await api.saveCustomModel(
+        `${currentStorageAlias}|${newCustomModelId.trim()}|llm`,
+        {
+          id: newCustomModelId.trim(),
+          name: newCustomModelName.trim() || newCustomModelId.trim(),
+          providerAlias: currentStorageAlias,
+          type: 'llm',
+        }
+      )
+      showAddCustomModelModal = false
+      newCustomModelId = ''
+      newCustomModelName = ''
+      await loadProviderModelsData(selectedProviderId!, currentStorageAlias)
+    } catch (err) {
+      alert(`Failed to add custom model: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      isSubmitting = false
+    }
+  }
 
   // Actions
   async function handleToggleAll(providerId: string, newActive: boolean) {
@@ -622,6 +865,191 @@
           {/each}
         </div>
       {/if}
+    </Card>
+
+    <!-- Available Models Card -->
+    <Card class="p-5">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-border">
+        <div class="flex flex-wrap items-center gap-3">
+          <div class="flex items-center gap-2">
+            <h2 class="font-semibold text-text-main">Available Models</h2>
+            <Badge tone="default">{displayModels.length}</Badge>
+          </div>
+
+          {#if hasReasoningModels}
+            <select
+              bind:value={thinkingMode}
+              class="h-7 rounded-lg border border-border bg-surface px-2 text-xs text-text-main outline-none transition-colors hover:border-brand-500/40 cursor-pointer"
+            >
+              <option value="auto">Thinking: Auto</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+          {/if}
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2">
+          {#if disabledDisplayModels.length > 0}
+            <Button size="sm" variant="outline" class="text-xs" onclick={handleEnableAll}>
+              <RotateCcw class="w-3.5 h-3.5 mr-1.5" />
+              Active All
+            </Button>
+          {/if}
+          {#if displayModels.length > 0}
+            <Button size="sm" variant="outline" class="text-xs text-red-500 hover:text-red-600 hover:border-red-500/40" onclick={handleDisableAll}>
+              <X class="w-3.5 h-3.5 mr-1.5" />
+              Disable All
+            </Button>
+          {/if}
+        </div>
+      </div>
+
+      {#if modelsTestError}
+        <div class="mt-4 p-3.5 rounded-xl border border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400 text-xs flex items-start gap-2.5 leading-relaxed">
+          <AlertTriangle class="w-4 h-4 shrink-0 mt-0.5" />
+          <div class="flex-1">
+            <p class="font-medium">{modelsTestError}</p>
+          </div>
+          <button
+            type="button"
+            onclick={() => (modelsTestError = '')}
+            class="text-red-600 dark:text-red-400 hover:opacity-75 cursor-pointer"
+          >
+            <X class="w-4 h-4" />
+          </button>
+        </div>
+      {/if}
+
+      <div class="mt-4 flex flex-col gap-4">
+        {#if allAvailableModels.length === 0}
+          <div class="py-12 flex flex-col items-center justify-center text-center gap-3 text-text-muted">
+            <Bot class="w-8 h-8 opacity-40" />
+            <p class="text-sm">No models registered for this provider yet.</p>
+            <Button size="sm" variant="primary" onclick={() => (showAddCustomModelModal = true)}>
+              <Plus class="w-4 h-4 mr-1.5" />
+              Add Model
+            </Button>
+          </div>
+        {:else}
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+            {#each displayModels as model (model.id)}
+              {@const fullModel = currentDisplayAlias ? `${currentDisplayAlias}/${model.id}` : model.id}
+              {@const displayModelText = `${fullModel}${thinkingMode !== 'auto' && model.caps.reasoning ? `(${thinkingMode})` : ''}`}
+              {@const isTesting = testingModelIds.has(model.id)}
+              {@const testResult = modelTestResults[model.id]}
+
+              <div class="p-3 rounded-xl border border-border bg-surface hover:border-brand-500/40 transition-colors flex items-center justify-between gap-2.5">
+                <div class="flex items-start gap-2.5 min-w-0 flex-1">
+                  <div class="mt-0.5 shrink-0">
+                    {#if isTesting}
+                      <Loader2 class="w-4 h-4 animate-spin text-brand-500" />
+                    {:else if testResult === 'ok'}
+                      <CheckCircle2 class="w-4 h-4 text-green-500" />
+                    {:else if testResult === 'error'}
+                      <XCircle class="w-4 h-4 text-red-500" />
+                    {:else}
+                      <Bot class="w-4 h-4 text-text-muted opacity-60" />
+                    {/if}
+                  </div>
+
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                      <code class="text-xs font-mono font-medium text-text-main break-all">
+                        {displayModelText}
+                      </code>
+                    </div>
+                    <div class="flex items-center gap-2 flex-wrap mt-0.5">
+                      {#if model.name}
+                        <span class="text-[11px] italic text-text-muted truncate max-w-[130px]" title={model.name}>
+                          {model.name}
+                        </span>
+                      {/if}
+                      {#if model.caps.vision}
+                        <span class="inline-flex items-center gap-1 text-[10px] font-medium text-blue-500">
+                          <Eye class="w-3 h-3" />
+                          Vision
+                        </span>
+                      {/if}
+                      {#if model.caps.reasoning}
+                        <span class="inline-flex items-center gap-1 text-[10px] font-medium text-amber-500">
+                          <Sparkles class="w-3 h-3" />
+                          Reasoning
+                        </span>
+                      {/if}
+                    </div>
+                  </div>
+                </div>
+
+                <div class="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    title="Test Model"
+                    disabled={isTesting}
+                    onclick={() => handleTestModel(model.id, fullModel)}
+                    class="p-1.5 rounded-lg border border-border bg-surface text-text-muted hover:text-text-main hover:border-brand-500/40 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <FlaskConical class="w-3.5 h-3.5 {isTesting ? 'animate-pulse text-brand-500' : ''}" />
+                  </button>
+
+                  <button
+                    type="button"
+                    title="Copy Model Name"
+                    onclick={() => copyModel(fullModel, model.id)}
+                    class="p-1.5 rounded-lg border border-border bg-surface text-text-muted hover:text-text-main hover:border-brand-500/40 transition-colors cursor-pointer"
+                  >
+                    {#if copiedModelId === model.id}
+                      <Check class="w-3.5 h-3.5 text-green-500" />
+                    {:else}
+                      <Copy class="w-3.5 h-3.5" />
+                    {/if}
+                  </button>
+
+                  <button
+                    type="button"
+                    title="Disable Model"
+                    onclick={() => handleDisableModel(model.id)}
+                    class="p-1.5 rounded-lg border border-border bg-surface text-text-muted hover:text-red-500 hover:border-red-500/40 transition-colors cursor-pointer"
+                  >
+                    <X class="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            {/each}
+
+            <!-- + Add Model dashed card -->
+            <button
+              type="button"
+              onclick={() => (showAddCustomModelModal = true)}
+              class="p-3 rounded-xl border border-dashed border-border hover:border-brand-500/50 bg-transparent hover:bg-black/[0.01] dark:hover:bg-white/[0.01] transition-colors flex items-center justify-center gap-2 text-xs font-medium text-text-muted hover:text-text-main cursor-pointer min-h-[58px]"
+            >
+              <Plus class="w-4 h-4" />
+              <span>Add Model</span>
+            </button>
+          </div>
+
+          {#if disabledDisplayModels.length > 0}
+            <div class="pt-3 border-t border-border flex flex-col gap-2">
+              <div class="text-xs font-medium text-text-muted">
+                Disabled models ({disabledDisplayModels.length})
+              </div>
+              <div class="flex flex-wrap gap-1.5">
+                {#each disabledDisplayModels as m (m.id)}
+                  <button
+                    type="button"
+                    onclick={() => handleEnableModel(m.id)}
+                    class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-mono bg-surface-2 hover:bg-surface-3 text-text-muted hover:text-text-main border border-border transition-colors cursor-pointer"
+                    title="Enable model {m.id}"
+                  >
+                    <span>+</span>
+                    <span>{m.id}</span>
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {/if}
+        {/if}
+      </div>
     </Card>
   </div>
 
@@ -1240,6 +1668,52 @@
           <Button size="sm" variant="ghost" onclick={() => (showAddKeyModal = false)}>Cancel</Button>
           <Button size="sm" variant="primary" type="submit" disabled={isSubmitting}>
             {isSubmitting ? 'Saving...' : 'Save Connection'}
+          </Button>
+        </div>
+      </form>
+    </div>
+  </div>
+{/if}
+
+<!-- Modal: Add Custom Model -->
+{#if showAddCustomModelModal}
+  <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+    <div class="w-full max-w-md bg-surface border border-border rounded-2xl shadow-2xl overflow-hidden animate-scale-in">
+      <div class="px-6 py-4 border-b border-border flex items-center justify-between">
+        <h3 class="font-bold text-text-main text-base">
+          Add Custom Model
+        </h3>
+        <button onclick={() => (showAddCustomModelModal = false)} class="text-text-muted hover:text-text-main cursor-pointer">
+          <X class="w-5 h-5" />
+        </button>
+      </div>
+
+      <form onsubmit={(e) => { e.preventDefault(); submitAddCustomModel(); }} class="p-6 flex flex-col gap-4">
+        <div>
+          <label class="block text-xs font-medium text-text-muted mb-1">Model ID <span class="text-red-500">*</span></label>
+          <input
+            type="text"
+            required
+            bind:value={newCustomModelId}
+            placeholder="e.g. custom-model-name"
+            class="w-full px-3 py-2 text-xs rounded-xl bg-bg border border-border text-text-main font-mono focus:outline-none focus:border-brand-500"
+          />
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-text-muted mb-1">Display Name (Optional)</label>
+          <input
+            type="text"
+            bind:value={newCustomModelName}
+            placeholder="e.g. Custom Model Name"
+            class="w-full px-3 py-2 text-xs rounded-xl bg-bg border border-border text-text-main focus:outline-none focus:border-brand-500"
+          />
+        </div>
+
+        <div class="flex items-center justify-end gap-2 pt-2 border-t border-border">
+          <Button size="sm" variant="ghost" onclick={() => (showAddCustomModelModal = false)}>Cancel</Button>
+          <Button size="sm" variant="primary" type="submit" disabled={isSubmitting || !newCustomModelId.trim()}>
+            {isSubmitting ? 'Adding...' : 'Add Model'}
           </Button>
         </div>
       </form>

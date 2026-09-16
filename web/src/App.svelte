@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
   import { Loader2 } from 'lucide-svelte'
   import { api, type APIKey, type Combo, type ProviderConnection, type ProviderNode, type Settings } from './api/client'
   import AnalyticsView from './components/AnalyticsView.svelte'
@@ -39,7 +40,7 @@
     }
   }
 
-  $effect(() => {
+  onMount(() => {
     loadData()
   })
 

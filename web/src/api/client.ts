@@ -46,6 +46,17 @@ export interface Settings {
   [key: string]: unknown
 }
 
+export interface ProviderNode {
+  id: string
+  type: string
+  name: string
+  prefix?: string
+  apiType?: string
+  baseUrl?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
 export interface FreebuffInitiateResponse {
   loginUrl: string
   authCode: string
@@ -108,6 +119,23 @@ export const api = {
     }),
   deleteConnection: (id: string) =>
     request<{ success: boolean }>(`/api/connections/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
+
+  // Provider Nodes (Custom Endpoints)
+  getProviderNodes: async () => {
+    const res = await request<{ nodes: ProviderNode[] }>('/api/provider-nodes')
+    return res.nodes || []
+  },
+  createProviderNode: async (payload: { name: string; prefix: string; apiType?: string; baseUrl?: string; type?: string }) => {
+    const res = await request<{ node: ProviderNode }>('/api/provider-nodes', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+    return res.node
+  },
+  deleteProviderNode: (id: string) =>
+    request<{ success: boolean }>(`/api/provider-nodes/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     }),
 

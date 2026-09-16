@@ -246,6 +246,69 @@ func (r *Repo) GetProviderNodeByPrefix(prefix string) (*models.ProviderNode, *Pr
 	return nil, nil, nil
 }
 
+// GetProviderNodes returns all provider nodes from the database.
+func (r *Repo) GetProviderNodes() ([]*models.ProviderNode, error) {
+	rows, err := r.db.Query(
+		"SELECT id, type, name, data, createdAt, updatedAt FROM providerNodes ORDER BY createdAt ASC",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get provider nodes: %w", err)
+	}
+	defer rows.Close()
+
+	var nodes []*models.ProviderNode
+	for rows.Next() {
+		var node models.ProviderNode
+		if err := rows.Scan(&node.ID, &node.Type, &node.Name, &node.Data, &node.CreatedAt, &node.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan provider node: %w", err)
+		}
+		nodes = append(nodes, &node)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate provider nodes: %w", err)
+	}
+	return nodes, nil
+}
+
+// CreateProviderNode inserts a new provider node.
+func (r *Repo) CreateProviderNode(id, nodeType, name, data string) (*models.ProviderNode, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	var nameVal any
+	if name != "" {
+		nameVal = name
+	}
+	var typeVal any
+	if nodeType != "" {
+		typeVal = nodeType
+	}
+	_, err := r.db.Exec(
+		"INSERT INTO providerNodes (id, type, name, data, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)",
+		id, typeVal, nameVal, data, now, now,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create provider node: %w", err)
+	}
+	t := nodeType
+	n := name
+	return &models.ProviderNode{
+		ID:        id,
+		Type:      &t,
+		Name:      &n,
+		Data:      data,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}, nil
+}
+
+// DeleteProviderNode deletes a provider node and its associated connections.
+func (r *Repo) DeleteProviderNode(id string) error {
+	if _, err := r.db.Exec("DELETE FROM providerNodes WHERE id = ?", id); err != nil {
+		return fmt.Errorf("delete provider node %s: %w", id, err)
+	}
+	_, _ = r.db.Exec("DELETE FROM providerConnections WHERE provider = ?", id)
+	return nil
+}
+
 // parseProviderNodeData extracts the JSON-encoded data field from a providerNode row.
 func parseProviderNodeData(raw string) *ProviderNodeData {
 	if raw == "" {

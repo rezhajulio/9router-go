@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Loader2 } from 'lucide-svelte'
-  import { api, type APIKey, type Combo, type ProviderConnection, type Settings } from './api/client'
+  import { api, type APIKey, type Combo, type ProviderConnection, type ProviderNode, type Settings } from './api/client'
   import AnalyticsView from './components/AnalyticsView.svelte'
   import ApiKeysView from './components/ApiKeysView.svelte'
   import CombosView from './components/CombosView.svelte'
@@ -13,6 +13,7 @@
 
   let activeTab = $state<ActiveTab>('connections')
   let connections = $state<ProviderConnection[]>([])
+  let providerNodes = $state<ProviderNode[]>([])
   let combos = $state<Combo[]>([])
   let apiKeys = $state<APIKey[]>([])
   let settings = $state<Settings>({})
@@ -21,15 +22,16 @@
 
   async function loadData() {
     try {
-      const [connsRes, combosRes, keysRes, settingsRes] = await Promise.all([
+      const [connsRes, nodesRes, combosRes, keysRes, settingsRes] = await Promise.all([
         api.getConnections().catch(() => []),
+        api.getProviderNodes().catch(() => []),
         api.getCombos().catch(() => []),
         api.getApiKeys().catch(() => []),
         api.getSettings().catch(() => ({})),
       ])
       connections = connsRes
+      providerNodes = nodesRes
       combos = combosRes
-      apiKeys = keysRes
       settings = settingsRes
     } finally {
       isLoading = false
@@ -80,7 +82,7 @@
           </div>
         {:else}
           {#if activeTab === 'connections'}
-            <ConnectionsView {connections} onRefresh={loadData} />
+            <ConnectionsView {connections} {providerNodes} onRefresh={loadData} />
           {:else if activeTab === 'combos'}
             <CombosView {combos} onRefresh={loadData} bind:isCreatingOpen={isCreateComboOpen} />
           {:else if activeTab === 'analytics'}

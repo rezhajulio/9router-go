@@ -128,6 +128,10 @@ func SetupRoutes(r interface {
 	r.Put("/api/connections/{id}", dashH.HandleUpdateConnection)
 	r.Delete("/api/connections/{id}", dashH.HandleDeleteConnection)
 
+	r.Get("/api/provider-nodes", dashH.HandleGetProviderNodes)
+	r.Post("/api/provider-nodes", dashH.HandleCreateProviderNode)
+	r.Delete("/api/provider-nodes/{id}", dashH.HandleDeleteProviderNode)
+
 	r.Get("/api/combos", dashH.HandleGetCombos)
 	r.Post("/api/combos", dashH.HandleCreateCombo)
 	r.Put("/api/combos/{id}", dashH.HandleUpdateCombo)
@@ -166,7 +170,8 @@ func SetupServerRouter(r chi.Router, repo *db.Repo, ts *TokenSaverConfig) {
 	r.Get("/analytics", webH.ServeHTTP)
 	r.Get("/settings", webH.ServeHTTP)
 	r.Get("/keys", webH.ServeHTTP)
-	r.Get("/assets/*", webH.ServeHTTP)
+	r.HandleFunc("/assets/*", webH.ServeHTTP)
+	r.HandleFunc("/providers/*", webH.ServeHTTP)
 	r.Get("/favicon.ico", webH.ServeHTTP)
 
 	r.HandleFunc("/api/hello", func(w http.ResponseWriter, r *http.Request) {

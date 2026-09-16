@@ -35,6 +35,11 @@ func RegisterRoutes(r chi.Router, h *DashboardHandler) {
 		r.Put("/connections/{id}", h.HandleUpdateConnection)
 		r.Delete("/connections/{id}", h.HandleDeleteConnection)
 
+		// Provider Nodes (Custom Endpoints)
+		r.Get("/provider-nodes", h.HandleGetProviderNodes)
+		r.Post("/provider-nodes", h.HandleCreateProviderNode)
+		r.Delete("/provider-nodes/{id}", h.HandleDeleteProviderNode)
+
 		// Combos
 		r.Get("/combos", h.HandleGetCombos)
 		r.Post("/combos", h.HandleCreateCombo)

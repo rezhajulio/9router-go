@@ -16,9 +16,12 @@
     index: number
     latency?: number | null
     isTestingLatency?: boolean
+    strictModelAssignment?: boolean
+    availableModels?: Array<{ id: string; name?: string }>
     onTestLatency: (conn: ProviderConnection) => void
     onDelete: (conn: ProviderConnection) => void
     onToggle: (conn: ProviderConnection) => void
+    onAssignModel?: (conn: ProviderConnection, modelId: string) => void
   }
 
   let {
@@ -26,18 +29,31 @@
     index,
     latency = null,
     isTestingLatency = false,
+    strictModelAssignment = false,
+    availableModels = [],
     onTestLatency,
     onDelete,
     onToggle,
+    onAssignModel,
   }: Props = $props()
 
   let isActive = $derived(conn.isActive === 1)
   let isOAuth = $derived(conn.authType === 'oauth')
   let displayName = $derived(
-    conn.name || (conn as any).displayName || (conn as any).email || (isOAuth ? 'OAuth Account' : 'API Key Slot')
+    conn.name ||
+      conn.displayName ||
+      conn.email ||
+      (conn as unknown as { displayName?: string; email?: string }).displayName ||
+      (isOAuth ? 'OAuth Account' : 'API Key Slot')
+  )
+  let assignedModel = $derived(
+    conn.assignedModel ||
+      (conn.providerSpecificData as { assignedModel?: string; freebuffModel?: string } | undefined)?.assignedModel ||
+      (conn.providerSpecificData as { assignedModel?: string; freebuffModel?: string } | undefined)?.freebuffModel ||
+      (conn as unknown as { freebuffModel?: string }).freebuffModel ||
+      ''
   )
 </script>
-
 <div class="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 group hover:bg-black/[0.01] dark:hover:bg-white/[0.01] px-2 rounded-lg transition-colors">
   <div class="flex items-center gap-3 min-w-0 flex-1">
     <div class="flex flex-col shrink-0 text-text-muted/40">
@@ -69,6 +85,23 @@
         <span class="text-xs text-text-muted font-mono">#{index + 1}</span>
         {#if latency != null}
           <span class="text-xs font-mono text-emerald-500 font-medium">{latency}ms</span>
+        {/if}
+      </div>
+      <div class="mt-1.5 flex items-center gap-2">
+        <select
+          value={assignedModel}
+          disabled={!strictModelAssignment}
+          onchange={(e) => onAssignModel?.(conn, (e.target as HTMLSelectElement).value)}
+          class="text-xs rounded-md border border-border bg-surface px-2 py-1 text-text-main focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-50 disabled:cursor-not-allowed max-w-[220px] truncate"
+          title={strictModelAssignment ? 'Assigned Model' : 'Strict Model Assignment disabled'}
+        >
+          <option value="">Unassigned</option>
+          {#each availableModels as model (model.id)}
+            <option value={model.id}>{model.name || model.id}</option>
+          {/each}
+        </select>
+        {#if assignedModel && !strictModelAssignment}
+          <span class="text-[11px] text-amber-500/80">(strict mode disabled)</span>
         {/if}
       </div>
 

@@ -4,11 +4,16 @@
   import Badge from '../../lib/ui/Badge.svelte'
   import Button from '../../lib/ui/Button.svelte'
   import Card from '../../lib/ui/Card.svelte'
+  import Toggle from '../../lib/ui/Toggle.svelte'
   import ConnectionRow from './ConnectionRow.svelte'
 
   interface Props {
     connections: ProviderConnection[]
     selectedProviderId: string
+    strictModelAssignment?: boolean
+    onToggleStrictModelAssignment?: (enabled: boolean) => void
+    availableModels?: Array<{ id: string; name?: string }>
+    onAssignModel?: (conn: ProviderConnection, modelId: string) => void
     onDeleteConnection: (conn: ProviderConnection) => void
     onToggleConnection: (conn: ProviderConnection) => void
     onAddConnection: () => void
@@ -18,12 +23,15 @@
   let {
     connections = [],
     selectedProviderId,
+    strictModelAssignment = false,
+    onToggleStrictModelAssignment,
+    availableModels = [],
+    onAssignModel,
     onDeleteConnection,
     onToggleConnection,
     onAddConnection,
     onRefresh,
   }: Props = $props()
-
   let testingLatencyId = $state<string | null>(null)
   let testLatencies = $state<Record<string, number | null>>({})
 
@@ -83,6 +91,25 @@
     </div>
   </div>
 
+  <!-- Strict Model Assignment Section -->
+  <div class="py-3 px-3.5 my-3 rounded-lg bg-surface-hover/30 border border-border/50 flex items-center justify-between gap-4">
+    <div class="min-w-0 flex-1">
+      <div class="flex items-center gap-2">
+        <span class="text-sm font-medium text-text-main">Strict Model Assignment</span>
+        {#if strictModelAssignment}
+          <Badge variant="primary" size="sm">Active</Badge>
+        {/if}
+      </div>
+      <p class="text-xs text-text-muted mt-0.5">
+        Only assigned accounts can serve each model for this provider.
+      </p>
+    </div>
+    <Toggle
+      size="sm"
+      checked={strictModelAssignment}
+      onChange={() => onToggleStrictModelAssignment?.(!strictModelAssignment)}
+    />
+  </div>
   {#if connections.length === 0}
     <div class="py-12 flex flex-col items-center justify-center text-center gap-3 text-text-muted">
       <Key class="w-8 h-8 opacity-40" />
@@ -109,6 +136,9 @@
           {index}
           latency={testLatencies[conn.id]}
           isTestingLatency={testingLatencyId === conn.id}
+          {strictModelAssignment}
+          {availableModels}
+          {onAssignModel}
           onTestLatency={testLatency}
           onDelete={onDeleteConnection}
           onToggle={onToggleConnection}

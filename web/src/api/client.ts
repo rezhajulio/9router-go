@@ -14,6 +14,8 @@ export interface ProviderConnection {
   testStatus?: string | null
   lastError?: string | null
   displayName?: string | null
+  assignedModel?: string | null
+  providerSpecificData?: { assignedModel?: string | null; [key: string]: unknown }
 }
 
 export interface Combo {
@@ -35,6 +37,13 @@ export interface APIKey {
   createdAt: string
 }
 
+export interface ProviderStrategyConfig {
+  proxyPoolId?: string
+  rotateStrategy?: string
+  strictModelAssignment?: boolean
+  [key: string]: unknown
+}
+
 export interface Settings {
   requireApiKey?: boolean
   rtkEnabled?: boolean
@@ -45,7 +54,7 @@ export interface Settings {
   headroomUrl?: string
   headroomKompress?: boolean
   autoUpdate?: boolean
-  providerStrategies?: Record<string, { proxyPoolId?: string; rotateStrategy?: string }>
+  providerStrategies?: Record<string, ProviderStrategyConfig>
   [key: string]: unknown
 }
 
@@ -139,7 +148,17 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  updateConnection: (id: string, payload: Partial<ProviderConnection> | { isActive?: boolean | number; [key: string]: unknown }) => {
+  updateConnection: (
+    id: string,
+    payload:
+      | Partial<ProviderConnection>
+      | {
+          isActive?: boolean | number
+          assignedModel?: string | null
+          providerSpecificData?: { assignedModel?: string | null; [key: string]: unknown }
+          [key: string]: unknown
+        }
+  ) => {
     const body: Record<string, unknown> = { ...payload }
     if ('isActive' in body && typeof body.isActive === 'number') {
       body.isActive = body.isActive === 1
@@ -231,14 +250,14 @@ export const api = {
     }),
 
   // Settings
-  getSettings: () => request<Record<string, any>>('/api/settings'),
-  updateSettings: (settings: Record<string, any>) =>
+  getSettings: () => request<Settings>('/api/settings'),
+  updateSettings: (settings: Partial<Settings> | Record<string, unknown>) =>
     request<{ success: boolean }>('/api/settings', {
       method: 'PUT',
       body: JSON.stringify(settings),
     }),
-  patchSettings: (settings: Record<string, any>) =>
-    request<any>('/api/settings', {
+  patchSettings: (settings: Partial<Settings> | Record<string, unknown>) =>
+    request<Record<string, unknown>>('/api/settings', {
       method: 'PATCH',
       body: JSON.stringify(settings),
     }),

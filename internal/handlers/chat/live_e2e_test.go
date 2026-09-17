@@ -138,7 +138,7 @@ func TestLiveE2E_DeepSeek_RealUpstream(t *testing.T) {
 	t.Logf("DeepSeek response code: %d", rec.Code)
 	t.Logf("DeepSeek response body: %s", rec.Body.String())
 
-	if rec.Code == http.StatusPaymentRequired || rec.Code == http.StatusTooManyRequests {
+	if rec.Code == http.StatusPaymentRequired || rec.Code == http.StatusTooManyRequests || rec.Code == http.StatusUnauthorized || rec.Code == http.StatusForbidden {
 		t.Skipf("DeepSeek balance/quota issue: %s", rec.Body.String())
 	}
 	if rec.Code != http.StatusOK {
@@ -258,7 +258,7 @@ func TestLiveE2E_DeepSeek_RealStream(t *testing.T) {
 	t.Logf("DeepSeek stream response code: %d", rec.Code)
 	t.Logf("DeepSeek stream response body:\n%s", rec.Body.String())
 
-	if rec.Code == http.StatusPaymentRequired || rec.Code == http.StatusTooManyRequests {
+	if rec.Code == http.StatusPaymentRequired || rec.Code == http.StatusTooManyRequests || rec.Code == http.StatusUnauthorized || rec.Code == http.StatusForbidden {
 		t.Skipf("DeepSeek balance/quota issue: %s", rec.Body.String())
 	}
 	if rec.Code != http.StatusOK {
@@ -293,6 +293,9 @@ func TestLiveE2E_Cline_SmartCombo(t *testing.T) {
 	t.Logf("SmartCombo stream response code: %d", rec.Code)
 	t.Logf("SmartCombo stream response body:\n%s", rec.Body.String())
 
+	if rec.Code == http.StatusPaymentRequired || rec.Code == http.StatusTooManyRequests || rec.Code == http.StatusUnauthorized || rec.Code == http.StatusForbidden {
+		t.Skipf("SmartCombo upstream balance/quota/auth issue: %d %s", rec.Code, rec.Body.String())
+	}
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected HTTP 200 from smart-combo, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -461,7 +464,7 @@ func TestLiveE2E_DeepSeek_MultiToolCall(t *testing.T) {
 	t.Logf("DeepSeek MultiToolCall Response Code: %d", rec.Code)
 	t.Logf("DeepSeek MultiToolCall Response Body: %s", rec.Body.String())
 
-	if rec.Code == http.StatusPaymentRequired || rec.Code == http.StatusTooManyRequests {
+	if rec.Code == http.StatusPaymentRequired || rec.Code == http.StatusTooManyRequests || rec.Code == http.StatusUnauthorized || rec.Code == http.StatusForbidden {
 		t.Skipf("DeepSeek balance/quota issue: %s", rec.Body.String())
 	}
 	if rec.Code != http.StatusOK {

@@ -466,3 +466,34 @@ func TestForwardFreebuff_ModelLocked_Writes409(t *testing.T) {
 		t.Errorf("expected currentModel=z-ai/glm-5.3-flash, got %q", errJson.Error.CurrentModel)
 	}
 }
+
+func TestFreebuff_RequestSession_EmptyInstanceID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != freebuffSessionPath {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"status": "ok",
+			"instanceId": ""
+		}`))
+	}))
+	defer srv.Close()
+
+	token := "tok-empty-instance"
+	model := "z-ai/glm-5.3-flash"
+	clearFreebuffSession(token, model)
+
+	sess, err := requestFreebuffSession(context.Background(), srv.Client(), srv.URL, token, model)
+	if sess != nil {
+		t.Fatalf("expected nil session on empty instanceId, got %v", sess)
+	}
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "freebuff session returned empty instanceId") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}

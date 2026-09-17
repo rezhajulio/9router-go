@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	json "encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -146,6 +147,10 @@ func requestFreebuffSession(ctx context.Context, client *http.Client, baseURL, t
 			StatusCode: resp.StatusCode,
 			Body:       respBytes,
 		}
+	}
+
+	if data.InstanceID == "" {
+		return nil, errors.New("freebuff session returned empty instanceId")
 	}
 
 	expiresAt := time.Now().Add(freebuffSessionTTL)

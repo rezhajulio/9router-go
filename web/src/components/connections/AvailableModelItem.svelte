@@ -20,6 +20,8 @@
     isTesting: boolean
     testResult?: 'ok' | 'error'
     isCopied: boolean
+    isActiveSession?: boolean
+    isLockedBySession?: boolean
     onTest: () => void
     onCopy: () => void
     onDisable: () => void
@@ -31,13 +33,15 @@
     isTesting,
     testResult,
     isCopied,
+    isActiveSession = false,
+    isLockedBySession = false,
     onTest,
     onCopy,
     onDisable,
   }: Props = $props()
 </script>
 
-<div class="p-3 rounded-xl border border-border bg-surface hover:border-brand-500/40 transition-colors flex items-center justify-between gap-2.5">
+<div class="p-3 rounded-xl border bg-surface transition-colors flex items-center justify-between gap-2.5 {isActiveSession ? 'border-emerald-500/50 bg-emerald-500/5 shadow-xs' : isLockedBySession ? 'border-border/60 opacity-80 hover:opacity-100 hover:border-border' : 'border-border hover:border-brand-500/40'}">
   <div class="flex items-start gap-2.5 min-w-0 flex-1">
     <div class="mt-0.5 shrink-0">
       {#if isTesting}
@@ -56,6 +60,16 @@
         <code class="text-xs font-mono font-medium text-text-main break-all">
           {displayModelText}
         </code>
+        {#if isActiveSession}
+          <span class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+            Active Session
+          </span>
+        {:else if isLockedBySession}
+          <span class="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-surface-2 text-text-muted/80 border border-border/50" title="Locked by active session">
+            🔒 Locked
+          </span>
+        {/if}
       </div>
       <div class="flex items-center gap-2 flex-wrap mt-0.5">
         {#if model.name}

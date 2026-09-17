@@ -6,18 +6,18 @@
     RotateCcw,
     X
   } from 'lucide-svelte'
-  import { api } from '../../api/client'
+  import { api, type FreebuffSessionStatusResponse } from '../../api/client'
   import Badge from '../../lib/ui/Badge.svelte'
   import Button from '../../lib/ui/Button.svelte'
   import Card from '../../lib/ui/Card.svelte'
   import type { ModelItem } from './types'
   import AvailableModelItem from './AvailableModelItem.svelte'
-
   interface Props {
     storageAlias: string
     displayAlias: string
     allAvailableModels: ModelItem[]
     disabledModelIds: string[]
+    connectionId?: string
     onAddCustomModel: () => void
     onDisabledModelsChange: (newDisabledIds: string[]) => void
   }
@@ -27,10 +27,64 @@
     displayAlias,
     allAvailableModels = [],
     disabledModelIds = [],
+    connectionId,
     onAddCustomModel,
     onDisabledModelsChange,
   }: Props = $props()
 
+  let isFreebuff = $derived(
+    storageAlias === 'freebuff' || storageAlias === 'fb' || displayAlias === 'fb'
+  )
+
+  let freebuffSession = $state<FreebuffSessionStatusResponse | null>(null)
+  let isLoadingSession = $state(false)
+
+  async function loadFreebuffSession() {
+    if (!isFreebuff) {
+      freebuffSession = null
+      return
+    }
+    isLoadingSession = true
+    try {
+      freebuffSession = await api.getFreebuffSessionStatus(connectionId)
+    } catch (err) {
+      console.error('Failed to fetch Freebuff session status:', err)
+      freebuffSession = null
+    } finally {
+      isLoadingSession = false
+    }
+  }
+
+  $effect(() => {
+    if (isFreebuff) {
+      loadFreebuffSession()
+    } else {
+      freebuffSession = null
+    }
+  })
+
+  let sessionExpiresInMin = $derived.by(() => {
+    if (!freebuffSession?.expiresAt) return null
+    const exp = new Date(freebuffSession.expiresAt).getTime()
+    const diffMs = exp - Date.now()
+    return Math.max(0, Math.round(diffMs / 60000))
+  })
+
+  function checkIsActiveSession(modelId: string): boolean {
+    if (!isFreebuff || freebuffSession?.status !== 'active' || !freebuffSession?.currentModel) {
+      return false
+    }
+    const cur = freebuffSession.currentModel.toLowerCase().trim()
+    const mid = modelId.toLowerCase().trim()
+    return mid === cur || mid.endsWith('/' + cur) || cur.endsWith('/' + mid)
+  }
+
+  function checkIsLockedBySession(modelId: string): boolean {
+    if (!isFreebuff || freebuffSession?.status !== 'active' || !freebuffSession?.currentModel) {
+      return false
+    }
+    return !checkIsActiveSession(modelId)
+  }
   let thinkingMode = $state('auto')
   let testingModelIds = $state<Set<string>>(new Set())
   let modelTestResults = $state<Record<string, 'ok' | 'error'>>({})
@@ -179,6 +233,36 @@
       </button>
     </div>
   {/if}
+  {#if isFreebuff && freebuffSession?.status === 'active' && freebuffSession?.currentModel}
+    <div class="mt-4 p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200 text-xs flex items-start gap-3 leading-relaxed shadow-xs">
+      <span class="text-base shrink-0 leading-none">🔒</span>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center justify-between gap-2 flex-wrap">
+          <p class="font-semibold text-sm text-emerald-900 dark:text-emerald-100">
+            Active Session: <span class="font-mono bg-emerald-500/20 px-1.5 py-0.5 rounded text-xs">{freebuffSession.currentModel}</span>
+            {#if sessionExpiresInMin !== null}
+              <span class="font-normal text-xs text-emerald-700 dark:text-emerald-300 ml-1">
+                ({sessionExpiresInMin > 0 ? `Expires in ${sessionExpiresInMin} min` : 'Expires soon'})
+              </span>
+            {/if}
+          </p>
+          <button
+            type="button"
+            title="Refresh session status"
+            disabled={isLoadingSession}
+            onclick={loadFreebuffSession}
+            class="p-1 rounded-md text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20 transition-colors cursor-pointer"
+          >
+            <RotateCcw class="w-3.5 h-3.5 {isLoadingSession ? 'animate-spin' : ''}" />
+          </button>
+        </div>
+        <p class="mt-1 text-emerald-700/90 dark:text-emerald-300/90">
+          Freebuff limits each account to 1 model per hour. Other models are locked until this session expires.
+        </p>
+      </div>
+    </div>
+  {/if}
+
 
   <div class="mt-4 flex flex-col gap-4">
     {#if allAvailableModels.length === 0}
@@ -203,6 +287,8 @@
             isTesting={testingModelIds.has(model.id)}
             testResult={modelTestResults[model.id]}
             isCopied={copiedModelId === model.id}
+            isActiveSession={checkIsActiveSession(model.id)}
+            isLockedBySession={checkIsLockedBySession(model.id)}
             onTest={() => handleTestModel(model.id, fullModel)}
             onCopy={() => copyModel(fullModel, model.id)}
             onDisable={() => handleDisableModel(model.id)}

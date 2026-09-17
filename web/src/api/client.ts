@@ -78,6 +78,30 @@ export interface FreebuffPollResponse {
   }
 }
 
+export interface FreebuffSessionStatusResponse {
+  status: 'active' | 'none' | 'unauthorized'
+  currentModel?: string
+  instanceId?: string
+  expiresAt?: string
+  freebucks?: {
+    balance?: number
+    daily?: {
+      limit?: number
+      spent?: number
+      remaining?: number
+      resetAt?: string
+      resetTimeZone?: string
+    }
+    wallet?: {
+      balance?: number
+      monthlyBonus?: number
+    }
+    planId?: string | null
+    prices?: Record<string, number>
+    [key: string]: unknown
+  }
+}
+
 // Helper to get auth header if stored in localStorage
 export function getAuthHeaders(): Record<string, string> {
   const token = localStorage.getItem('9router_key') || 'sk-8b71f86e0a1f2fb5-nhz496-cfa1c800'
@@ -225,6 +249,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ fingerprintId, fingerprintHash }),
     }),
+  getFreebuffSessionStatus: (connectionId?: string) =>
+    request<FreebuffSessionStatusResponse>(
+      `/api/oauth/freebuff/session${connectionId ? `?connectionId=${encodeURIComponent(connectionId)}` : ''}`
+    ),
   getAntigravityAuthorizeUrl: () => request<{ url: string; redirectUrl: string; state: string }>('/api/oauth/antigravity/authorize'),
   getSystemVersion: () => request<{ currentVersion: string; latestVersion?: string }>('/api/version'),
 

@@ -31,6 +31,8 @@ func setupTestDB(t *testing.T) (*sql.DB, func()) {
 		provider TEXT NOT NULL,
 		authType TEXT NOT NULL,
 		name TEXT,
+		email TEXT,
+		priority INTEGER,
 		isActive INTEGER DEFAULT 1,
 		data TEXT NOT NULL,
 		createdAt TEXT,

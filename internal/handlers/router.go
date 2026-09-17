@@ -107,6 +107,7 @@ func SetupRoutes(r interface {
 	r.Post("/api/oauth/grok-cli/bulk-import", oauthH.HandleOAuthGrokCliBulkImport)
 	r.Post("/api/oauth/freebuff/initiate", oauthH.HandleFreebuffInitiate)
 	r.Post("/api/oauth/freebuff/poll", oauthH.HandleFreebuffPoll)
+	r.Get("/api/oauth/freebuff/session", oauthH.HandleFreebuffSessionStatus)
 	r.Get("/api/oauth/antigravity/authorize", oauthH.HandleAntigravityAuthorize)
 	r.Get("/api/oauth/antigravity/callback", oauthH.HandleAntigravityCallback)
 	r.Post("/api/oauth/antigravity/callback", oauthH.HandleAntigravityCallback)

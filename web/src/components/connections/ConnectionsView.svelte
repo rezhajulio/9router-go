@@ -214,6 +214,7 @@
       displayAlias={currentDisplayAlias}
       {allAvailableModels}
       {disabledModelIds}
+      connectionId={selectedConnections[0]?.id}
       onAddCustomModel={() => (showAddCustomModelModal = true)}
       onDisabledModelsChange={(next) => (disabledModelIds = next)}
     />

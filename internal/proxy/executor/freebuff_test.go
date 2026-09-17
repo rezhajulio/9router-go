@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	stdjson "encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"9router/proxy/internal/providers"
+	"9router/proxy/internal/proxy"
 )
 
 func TestFreebuff_EnsureMarker(t *testing.T) {
@@ -304,5 +306,163 @@ func TestForwardFreebuff_InvalidJSON(t *testing.T) {
 	err := ForwardFreebuff(rec, req)
 	if err == nil {
 		t.Fatalf("expected error on invalid JSON, got nil")
+	}
+}
+
+func TestFreebuff_RequestSession_ModelLocked_Recovery(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != freebuffSessionPath {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"status": "model_locked",
+			"currentModel": "z-ai/glm-5.3-flash",
+			"requestedModel": "z-ai/glm-5.3-flash",
+			"instanceId": "inst-recovered-123",
+			"expiresAt": "2026-09-17T02:00:00Z"
+		}`))
+	}))
+	defer srv.Close()
+
+	token := "tok-recovery-test"
+	model := "z-ai/glm-5.3-flash"
+	clearFreebuffSession(token, model)
+
+	sess, err := requestFreebuffSession(context.Background(), srv.Client(), srv.URL, token, model)
+	if err != nil {
+		t.Fatalf("expected recovery when requestedModel==currentModel, got err: %v", err)
+	}
+	if sess == nil || sess.InstanceID != "inst-recovered-123" {
+		t.Fatalf("expected instanceId inst-recovered-123, got %v", sess)
+	}
+
+	// Verify cached
+	cached, ok := getFreebuffSession(token, model)
+	if !ok || cached.InstanceID != "inst-recovered-123" {
+		t.Fatalf("expected session to be cached")
+	}
+}
+
+func TestFreebuff_RequestSession_ModelLocked_ConflictError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != freebuffSessionPath {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{
+			"status": "model_locked",
+			"currentModel": "z-ai/glm-5.3-flash",
+			"requestedModel": "mimo/mimo-v2.5",
+			"accessTier": "limited"
+		}`))
+	}))
+	defer srv.Close()
+
+	token := "tok-lock-test"
+	model := "mimo/mimo-v2.5"
+	clearFreebuffSession(token, model)
+
+	sess, err := requestFreebuffSession(context.Background(), srv.Client(), srv.URL, token, model)
+	if sess != nil {
+		t.Fatalf("expected nil session on model_locked mismatch, got %v", sess)
+	}
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+
+	var ue *proxy.UpstreamError
+	if !errors.As(err, &ue) {
+		t.Fatalf("expected *proxy.UpstreamError, got %T: %v", err, err)
+	}
+	if ue.StatusCode != http.StatusConflict {
+		t.Errorf("expected 409, got %d", ue.StatusCode)
+	}
+
+	var errJson struct {
+		Error struct {
+			Message      string `json:"message"`
+			Type         string `json:"type"`
+			Code         string `json:"code"`
+			CurrentModel string `json:"currentModel"`
+		} `json:"error"`
+	}
+	if err := stdjson.Unmarshal(ue.Body, &errJson); err != nil {
+		t.Fatalf("failed to unmarshal error body %s: %v", string(ue.Body), err)
+	}
+
+	if errJson.Error.Type != "model_locked" || errJson.Error.Code != "model_locked" {
+		t.Errorf("expected type/code=model_locked, got %v", errJson.Error)
+	}
+	if errJson.Error.CurrentModel != "z-ai/glm-5.3-flash" {
+		t.Errorf("expected currentModel=z-ai/glm-5.3-flash, got %q", errJson.Error.CurrentModel)
+	}
+	expectedMsg := `Freebuff session is locked to "z-ai/glm-5.3-flash" — it cannot serve mimo/mimo-v2.5. Use "z-ai/glm-5.3-flash" or wait for the session to expire (~1h).`
+	if errJson.Error.Message != expectedMsg {
+		t.Errorf("expected message %q, got %q", expectedMsg, errJson.Error.Message)
+	}
+}
+
+func TestForwardFreebuff_ModelLocked_Writes409(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == freebuffSessionPath {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{
+				"status": "model_locked",
+				"currentModel": "z-ai/glm-5.3-flash",
+				"requestedModel": "mimo/mimo-v2.5"
+			}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	token := "tok-fwd-lock-test"
+	model := "mimo/mimo-v2.5"
+	clearFreebuffSession(token, model)
+
+	req := &Request{
+		Ctx:    context.Background(),
+		Client: srv.Client(),
+		Config: &providers.ProviderConfig{
+			BaseURL: srv.URL + "/chat/completions",
+		},
+		APIKey: token,
+		Body:   []byte(`{"model":"mimo/mimo-v2.5","messages":[{"role":"user","content":"hello"}]}`),
+	}
+
+	rec := httptest.NewRecorder()
+	err := ForwardFreebuff(rec, req)
+	if err == nil {
+		t.Fatalf("expected error on model_locked, got nil")
+	}
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected recorder HTTP 409, got %d", rec.Code)
+	}
+
+	var errJson struct {
+		Error struct {
+			Message      string `json:"message"`
+			Type         string `json:"type"`
+			Code         string `json:"code"`
+			CurrentModel string `json:"currentModel"`
+		} `json:"error"`
+	}
+	if err := stdjson.Unmarshal(rec.Body.Bytes(), &errJson); err != nil {
+		t.Fatalf("failed to unmarshal recorder body %s: %v", rec.Body.String(), err)
+	}
+
+	if errJson.Error.Type != "model_locked" || errJson.Error.Code != "model_locked" {
+		t.Errorf("expected type/code=model_locked, got %v", errJson.Error)
+	}
+	if errJson.Error.CurrentModel != "z-ai/glm-5.3-flash" {
+		t.Errorf("expected currentModel=z-ai/glm-5.3-flash, got %q", errJson.Error.CurrentModel)
 	}
 }

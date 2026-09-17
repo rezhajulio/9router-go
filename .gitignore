@@ -2,6 +2,7 @@
 /9router-go
 /9router-go-*
 *.exe
+web/dist/
 
 # Test binaries
 *.test

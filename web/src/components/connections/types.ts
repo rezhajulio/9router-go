@@ -1,5 +1,22 @@
 import { api, type ProviderConnection } from '../../api/client'
-import { getModelCaps } from '../../lib/models'
+import { getModelCaps, getModelKind } from '../../lib/models'
+
+export const MEDIA_KINDS: Record<string, true> = {
+  image: true,
+  tts: true,
+  stt: true,
+  embedding: true,
+  video: true,
+}
+
+export function isChatModel(m: unknown): boolean {
+  const kind = getModelKind(m)
+  if (!kind || kind === 'llm') {
+    const obj = typeof m === 'object' && m !== null ? (m as { kind?: string; type?: string }) : null
+    return !(obj?.kind && MEDIA_KINDS[obj.kind]) && !(obj?.type && MEDIA_KINDS[obj.type])
+  }
+  return false
+}
 
 export interface ProviderStats {
   total: number
@@ -15,6 +32,7 @@ export interface ModelItem {
   name?: string
   isCustom?: boolean
   caps: { vision: boolean; reasoning: boolean }
+  kind?: string
 }
 
 export interface CustomModelData {
@@ -98,7 +116,7 @@ export async function fetchProviderModelsData(
 }
 
 export function buildAvailableModels(
-  builtInModels: Array<{ id: string; name?: string }>,
+  builtInModels: Array<{ id: string; name?: string; kind?: string; type?: string }>,
   providerCustomModels: CustomModelData[]
 ): ModelItem[] {
   const list: ModelItem[] = []
@@ -107,12 +125,24 @@ export function buildAvailableModels(
   for (const cm of providerCustomModels) {
     if (!cm.id || seen.has(cm.id)) continue
     seen.add(cm.id)
-    list.push({ id: cm.id, name: cm.name || cm.id, isCustom: true, caps: getModelCaps(cm.id, cm) })
+    list.push({
+      id: cm.id,
+      name: cm.name || cm.id,
+      isCustom: true,
+      caps: getModelCaps(cm.id, cm),
+      kind: getModelKind(cm),
+    })
   }
   for (const bm of builtInModels) {
     if (!bm.id || seen.has(bm.id)) continue
     seen.add(bm.id)
-    list.push({ id: bm.id, name: bm.name, isCustom: false, caps: getModelCaps(bm.id, bm) })
+    list.push({
+      id: bm.id,
+      name: bm.name,
+      isCustom: false,
+      caps: getModelCaps(bm.id, bm),
+      kind: getModelKind(bm),
+    })
   }
   return list
 }

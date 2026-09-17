@@ -1,6 +1,23 @@
 import type { Combo, ProviderConnection, ProviderNode } from '../../api/client'
-import { getModelCaps, getModelsByProviderId, PROVIDER_ID_TO_ALIAS } from '../../lib/models'
-import { PROVIDER_CATALOG } from '../../lib/providers'
+import { getModelCaps, getModelKind, getModelsByProviderId, PROVIDER_ID_TO_ALIAS } from '../../lib/models'
+import { PROVIDER_CATALOG, isChatProvider } from '../../lib/providers'
+
+const MEDIA_KINDS: Record<string, true> = {
+  image: true,
+  tts: true,
+  stt: true,
+  embedding: true,
+  video: true,
+}
+
+function isChatModel(m: unknown): boolean {
+  const kind = getModelKind(m)
+  if (!kind || kind === 'llm') {
+    const obj = typeof m === 'object' && m !== null ? (m as { kind?: string; type?: string }) : null
+    return !(obj?.kind && MEDIA_KINDS[obj.kind]) && !(obj?.type && MEDIA_KINDS[obj.type])
+  }
+  return false
+}
 
 export interface PickerModel {
   id: string
@@ -32,6 +49,9 @@ export function resolveModelPickerGroups(
 
   // 1. Catalog providers (active connections or noAuth)
   for (const catItem of PROVIDER_CATALOG) {
+    if (!isChatProvider(catItem)) {
+      continue
+    }
     const isConnected =
       activeProviderIds.has(catItem.id) || (catItem.alias && activeProviderIds.has(catItem.alias))
     const isNoAuth = catItem.noAuth === true
@@ -49,7 +69,7 @@ export function resolveModelPickerGroups(
     const models: PickerModel[] = []
 
     for (const m of rawModels) {
-      if (!m.id || seenModelIds.has(m.id)) continue
+      if (!m.id || seenModelIds.has(m.id) || !isChatModel(m)) continue
       seenModelIds.add(m.id)
       models.push({
         id: m.id,
@@ -86,6 +106,7 @@ export function resolveModelPickerGroups(
         const mid = typeof m === 'string' ? m : m.id
         const mname = typeof m === 'string' ? m : m.name || m.id
         if (!mid || seen.has(mid)) continue
+        if (typeof m === 'object' && m !== null && !isChatModel(m)) continue
         seen.add(mid)
         models.push({
           id: mid,
@@ -99,7 +120,7 @@ export function resolveModelPickerGroups(
       if (catalogModels && catalogModels.length > 0) {
         const seen = new Set<string>()
         for (const m of catalogModels) {
-          if (!m.id || seen.has(m.id)) continue
+          if (!m.id || seen.has(m.id) || !isChatModel(m)) continue
           seen.add(m.id)
           models.push({
             id: m.id,

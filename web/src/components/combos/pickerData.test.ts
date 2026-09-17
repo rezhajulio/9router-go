@@ -51,6 +51,47 @@ describe('pickerData', () => {
     assert.ok(ocGroup.models.length > 0)
   })
 
+  it('excludes pure media providers and non-llm models from model picker groups', () => {
+    const connections: ProviderConnection[] = [
+      {
+        id: 'c-el',
+        provider: 'elevenlabs',
+        authType: 'apikey',
+        name: null,
+        email: null,
+        priority: null,
+        isActive: 1,
+        data: '{}',
+        createdAt: '',
+        updatedAt: '',
+      },
+      {
+        id: 'c-oai',
+        provider: 'openai',
+        authType: 'apikey',
+        name: null,
+        email: null,
+        priority: null,
+        isActive: 1,
+        data: '{}',
+        createdAt: '',
+        updatedAt: '',
+      },
+    ]
+
+    const groups = resolveModelPickerGroups(connections, [])
+    const elGroup = groups.find((g) => g.id === 'elevenlabs')
+    assert.strictEqual(elGroup, undefined)
+
+    const oaiGroup = groups.find((g) => g.id === 'openai')
+    assert.ok(oaiGroup)
+    assert.ok(oaiGroup.models.some((m) => m.id.includes('gpt')))
+    assert.strictEqual(oaiGroup.models.some((m) => m.id === 'dall-e-3'), false)
+    assert.strictEqual(oaiGroup.models.some((m) => m.id === 'tts-1'), false)
+    assert.strictEqual(oaiGroup.models.some((m) => m.id === 'whisper-1'), false)
+    assert.strictEqual(oaiGroup.models.some((m) => m.id === 'text-embedding-3-small'), false)
+  })
+
   it('includes compatible nodes from providerNodes', () => {
     const nodes = [
       {

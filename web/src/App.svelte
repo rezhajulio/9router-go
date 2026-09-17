@@ -6,6 +6,7 @@
   import ApiKeysView from './components/ApiKeysView.svelte'
   import CombosView from './components/combos/CombosView.svelte'
   import ConnectionsView from './components/connections/ConnectionsView.svelte'
+  import MediaKindView from './components/media/MediaKindView.svelte'
   import MediaWebView from './components/media/MediaWebView.svelte'
   import SettingsView from './components/SettingsView.svelte'
   import Sidebar from './components/Sidebar.svelte'
@@ -96,9 +97,13 @@
     keys: { title: 'CLI & Remote Access', description: 'API keys for your CLI tools' },
     terminal: { title: 'Console Logs', description: 'Live gateway event stream' },
     settings: { title: 'Token Saver & Quota', description: 'RTK engines and system configuration' },
+    'media-embedding': { title: 'Embedding Models', description: 'Vector embeddings and semantic retrieval' },
+    'media-image': { title: 'Text to Image', description: 'Image generation and transformation models' },
+    'media-tts': { title: 'Text to Speech', description: 'Voice synthesis and audio generation models' },
+    'media-stt': { title: 'Speech to Text', description: 'Audio transcription and speech recognition models' },
+    'media-video': { title: 'Video Generation', description: 'Text-to-video and motion synthesis models' },
     'media-web': { title: 'Web Fetch & Search', description: 'Configure web search and scrape tools' },
   }
-
   function handleOpenNewCombo() {
     navigate('combos')
     isCreateComboOpen = true
@@ -139,6 +144,16 @@
             <ConnectionsView {connections} {providerNodes} onRefresh={loadData} bind:selectedProviderId />
           {:else if activeTab === 'combos'}
             <CombosView {combos} {connections} {providerNodes} onRefresh={loadData} bind:isCreatingOpen={isCreateComboOpen} />
+          {:else if activeTab === 'media-embedding'}
+            <MediaKindView kind="embedding" {connections} onRefresh={loadData} />
+          {:else if activeTab === 'media-image'}
+            <MediaKindView kind="image" {connections} onRefresh={loadData} />
+          {:else if activeTab === 'media-tts'}
+            <MediaKindView kind="tts" {connections} onRefresh={loadData} />
+          {:else if activeTab === 'media-stt'}
+            <MediaKindView kind="stt" {connections} onRefresh={loadData} />
+          {:else if activeTab === 'media-video'}
+            <MediaKindView kind="video" {connections} onRefresh={loadData} />
           {:else if activeTab === 'media-web'}
             <MediaWebView
               {connections}

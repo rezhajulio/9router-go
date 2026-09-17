@@ -7,6 +7,7 @@ export interface ProviderCatalogItem {
   color: string
   icon: string
   noAuth?: boolean
+  serviceKinds?: string[]
 }
 
 export const PROVIDER_CATEGORIES = [
@@ -26,7 +27,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "ag",
     "color": "#F59E0B",
     "icon": "rocket_launch",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "claude",
@@ -35,7 +39,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "cc",
     "color": "#D97757",
     "icon": "smart_toy",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "cline",
@@ -44,7 +51,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "cl",
     "color": "#5B9BD5",
     "icon": "smart_toy",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "clinepass",
@@ -53,7 +63,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "clinepass",
     "color": "#5B9BD5",
     "icon": "vpn_key",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "codebuddy-intl",
@@ -62,7 +75,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "cbai",
     "color": "#006EFF",
     "icon": "smart_toy",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "codebuddy-cn",
@@ -71,7 +87,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "cbcn",
     "color": "#006EFF",
     "icon": "smart_toy",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "cursor",
@@ -80,7 +99,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "cu",
     "color": "#00D4AA",
     "icon": "edit_note",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "github",
@@ -89,7 +111,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "gh",
     "color": "#333333",
     "icon": "code",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "gitlab",
@@ -98,7 +123,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "gitlab",
     "color": "#FC6D26",
     "icon": "code",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "grok-cli",
@@ -107,7 +135,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "gcli",
     "color": "#1DA1F2",
     "icon": "auto_awesome",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "iflow",
@@ -116,7 +147,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "if",
     "color": "#6366F1",
     "icon": "water_drop",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "kilocode",
@@ -125,7 +159,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "kc",
     "color": "#FF6B35",
     "icon": "code",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "kimi",
@@ -134,7 +171,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "kimi",
     "color": "#1E3A8A",
     "icon": "psychology",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "codex",
@@ -143,7 +183,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "cx",
     "color": "#3B82F6",
     "icon": "code",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "qoder",
@@ -152,7 +195,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "qd",
     "color": "#EC4899",
     "icon": "water_drop",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "xai",
@@ -161,7 +207,12 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "xai",
     "color": "#1DA1F2",
     "icon": "auto_awesome",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm",
+      "image",
+      "video"
+    ]
   },
   {
     "id": "xiaomi-mimo",
@@ -170,7 +221,11 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "mimo",
     "color": "#FF6900",
     "icon": "smart_toy",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm",
+      "tts"
+    ]
   },
   {
     "id": "zed",
@@ -179,16 +234,22 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "zd",
     "color": "#A855F7",
     "icon": "code",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
-    id: 'freebuff',
-    name: 'Freebuff',
-    category: 'free',
-    alias: 'fb',
-    color: '#0a0a0b',
-    icon: 'bolt',
-    noAuth: false
+    "id": "freebuff",
+    "name": "Freebuff",
+    "category": "free",
+    "alias": "fb",
+    "color": "#0a0a0b",
+    "icon": "bolt",
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "gemini-cli",
@@ -197,7 +258,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "gc",
     "color": "#4285F4",
     "icon": "terminal",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "kiro",
@@ -206,7 +270,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "kr",
     "color": "#FF6B35",
     "icon": "psychology_alt",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "mimo-free",
@@ -215,7 +282,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "mmf",
     "color": "#FF6900",
     "icon": "smart_toy",
-    "noAuth": true
+    "noAuth": true,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "opencode",
@@ -224,7 +294,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "oc",
     "color": "#E87040",
     "icon": "terminal",
-    "noAuth": true
+    "noAuth": true,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "api-airforce",
@@ -233,7 +306,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "af",
     "color": "#0EA5E9",
     "icon": "flight",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "bazaarlink",
@@ -242,7 +318,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "bzl",
     "color": "#DC2626",
     "icon": "storefront",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "byteplus",
@@ -251,7 +330,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "bpm",
     "color": "#2563EB",
     "icon": "cloud",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "cloudflare-ai",
@@ -260,7 +342,11 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "cf",
     "color": "#F38020",
     "icon": "cloud",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm",
+      "image"
+    ]
   },
   {
     "id": "coqui",
@@ -269,7 +355,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "coqui",
     "color": "#10B981",
     "icon": "record_voice_over",
-    "noAuth": true
+    "noAuth": true,
+    "serviceKinds": [
+      "tts"
+    ]
   },
   {
     "id": "edge-tts",
@@ -278,7 +367,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "edge-tts",
     "color": "#0078D4",
     "icon": "record_voice_over",
-    "noAuth": true
+    "noAuth": true,
+    "serviceKinds": [
+      "tts"
+    ]
   },
   {
     "id": "gemini",
@@ -287,7 +379,14 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "gemini",
     "color": "#4285F4",
     "icon": "diamond",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm",
+      "image",
+      "tts",
+      "stt",
+      "embedding"
+    ]
   },
   {
     "id": "google-tts",
@@ -296,7 +395,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "google-tts",
     "color": "#4285F4",
     "icon": "record_voice_over",
-    "noAuth": true
+    "noAuth": true,
+    "serviceKinds": [
+      "tts"
+    ]
   },
   {
     "id": "kilo-gateway",
@@ -305,7 +407,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "kgw",
     "color": "#8B5CF6",
     "icon": "login",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "kimchi",
@@ -314,7 +419,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "kimchi",
     "color": "#FF521D",
     "icon": "restaurant",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "local-device",
@@ -323,7 +431,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "local-device",
     "color": "#64748B",
     "icon": "speaker",
-    "noAuth": true
+    "noAuth": true,
+    "serviceKinds": [
+      "tts"
+    ]
   },
   {
     "id": "nvidia",
@@ -332,7 +443,13 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "nvidia",
     "color": "#76B900",
     "icon": "developer_board",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm",
+      "stt",
+      "tts",
+      "embedding"
+    ]
   },
   {
     "id": "ollama",
@@ -341,7 +458,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "ollama",
     "color": "#ffffffff",
     "icon": "cloud",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "openrouter",
@@ -350,7 +470,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "openrouter",
     "color": "#F97316",
     "icon": "router",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "poolside",
@@ -359,7 +482,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "ps",
     "color": "#0EA5E9",
     "icon": "water_drop",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "searxng",
@@ -368,7 +494,11 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "searxng",
     "color": "#3B82F6",
     "icon": "saved_search",
-    "noAuth": true
+    "noAuth": true,
+    "serviceKinds": [
+      "webSearch",
+      "web"
+    ]
   },
   {
     "id": "tortoise",
@@ -377,7 +507,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "tortoise",
     "color": "#7C3AED",
     "icon": "record_voice_over",
-    "noAuth": true
+    "noAuth": true,
+    "serviceKinds": [
+      "tts"
+    ]
   },
   {
     "id": "vertex",
@@ -386,7 +519,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "vx",
     "color": "#4285F4",
     "icon": "cloud",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "alicode",
@@ -395,7 +531,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "alicode",
     "color": "#FF6A00",
     "icon": "cloud",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "alicode-intl",
@@ -404,7 +543,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "alicode-intl",
     "color": "#FF6A00",
     "icon": "cloud",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "alims-intl",
@@ -413,7 +555,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "alims-intl",
     "color": "#FF6A00",
     "icon": "cloud",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "alitp-intl",
@@ -422,7 +567,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "alitp-intl",
     "color": "#FF6A00",
     "icon": "cloud",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "anthropic",
@@ -431,7 +579,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "anthropic",
     "color": "#D97757",
     "icon": "smart_toy",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "anthropic-version",
@@ -440,7 +591,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "anthropic-version",
     "color": "#888888",
     "icon": "dns",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "assemblyai",
@@ -449,7 +603,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "aai",
     "color": "#0062FF",
     "icon": "record_voice_over",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "stt"
+    ]
   },
   {
     "id": "aws-polly",
@@ -458,7 +615,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "polly",
     "color": "#FF9900",
     "icon": "record_voice_over",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "tts"
+    ]
   },
   {
     "id": "azure",
@@ -467,7 +627,14 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "azure",
     "color": "#0078D4",
     "icon": "cloud",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm",
+      "image",
+      "tts",
+      "stt",
+      "embedding"
+    ]
   },
   {
     "id": "baidu",
@@ -476,7 +643,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "qianfan",
     "color": "#2932E1",
     "icon": "search",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "black-forest-labs",
@@ -485,7 +655,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "bfl",
     "color": "#111827",
     "icon": "image",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "image"
+    ]
   },
   {
     "id": "blackbox",
@@ -494,7 +667,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "bb",
     "color": "#5B5FEF",
     "icon": "smart_toy",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "bluesminds",
@@ -503,7 +679,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "bm",
     "color": "#2563EB",
     "icon": "psychology",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "brave-search",
@@ -512,7 +691,11 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "brave",
     "color": "#FB542B",
     "icon": "travel_explore",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "webSearch",
+      "web"
+    ]
   },
   {
     "id": "cartesia",
@@ -521,7 +704,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "cartesia",
     "color": "#FF4F8B",
     "icon": "spatial_audio",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "tts"
+    ]
   },
   {
     "id": "cerebras",
@@ -530,7 +716,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "cerebras",
     "color": "#FF4F00",
     "icon": "memory",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "chutes",
@@ -539,7 +728,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "ch",
     "color": "#ffffffff",
     "icon": "water_drop",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "cohere",
@@ -548,7 +740,11 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "cohere",
     "color": "#39594D",
     "icon": "hub",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm",
+      "embedding"
+    ]
   },
   {
     "id": "comfyui",
@@ -557,7 +753,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "comfyui",
     "color": "#4CAF50",
     "icon": "account_tree",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "image"
+    ]
   },
   {
     "id": "commandcode",
@@ -566,7 +765,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "cmc",
     "color": "#000000",
     "icon": "smart_toy",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "content-type",
@@ -575,7 +777,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "content-type",
     "color": "#888888",
     "icon": "dns",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "copilot-integration-id",
@@ -584,7 +789,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "copilot-integration-id",
     "color": "#888888",
     "icon": "dns",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "deepgram",
@@ -593,7 +801,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "dg",
     "color": "#13EF93",
     "icon": "mic",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "stt"
+    ]
   },
   {
     "id": "deepseek",
@@ -602,7 +813,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "ds",
     "color": "#4D6BFE",
     "icon": "bolt",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "devin-cli",
@@ -611,7 +825,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "devin-cli",
     "color": "#888888",
     "icon": "dns",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "editor-plugin-version",
@@ -620,7 +837,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "editor-plugin-version",
     "color": "#888888",
     "icon": "dns",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "editor-version",
@@ -629,7 +849,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "editor-version",
     "color": "#888888",
     "icon": "dns",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "elevenlabs",
@@ -638,7 +861,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "el",
     "color": "#6C47FF",
     "icon": "record_voice_over",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "tts"
+    ]
   },
   {
     "id": "exa",
@@ -647,7 +873,11 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "exa",
     "color": "#2563EB",
     "icon": "manage_search",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "webSearch",
+      "web"
+    ]
   },
   {
     "id": "fal-ai",
@@ -656,7 +886,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "fal",
     "color": "#2563EB",
     "icon": "image",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "image"
+    ]
   },
   {
     "id": "featherless",
@@ -665,7 +898,11 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "fl",
     "color": "#111827",
     "icon": "flutter_dash",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm",
+      "embedding"
+    ]
   },
   {
     "id": "firecrawl",
@@ -674,7 +911,11 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "firecrawl",
     "color": "#F59E0B",
     "icon": "local_fire_department",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "webFetch",
+      "web"
+    ]
   },
   {
     "id": "fireworks",
@@ -683,7 +924,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "fireworks",
     "color": "#7B2EF2",
     "icon": "local_fire_department",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "fish-audio",
@@ -692,7 +936,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "fish",
     "color": "#1E9BF0",
     "icon": "record_voice_over",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "tts"
+    ]
   },
   {
     "id": "glm-cn",
@@ -701,7 +948,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "glm-cn",
     "color": "#DC2626",
     "icon": "code",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "glm",
@@ -710,7 +960,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "glm",
     "color": "#2563EB",
     "icon": "code",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "google-pse",
@@ -719,7 +972,11 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "gpse",
     "color": "#4285F4",
     "icon": "search",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "webSearch",
+      "web"
+    ]
   },
   {
     "id": "groq",
@@ -728,7 +985,11 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "groq",
     "color": "#F55036",
     "icon": "speed",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm",
+      "stt"
+    ]
   },
   {
     "id": "huggingface",
@@ -737,7 +998,12 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "hf",
     "color": "#FFD21E",
     "icon": "face",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm",
+      "image",
+      "stt"
+    ]
   },
   {
     "id": "hyperbolic",
@@ -746,7 +1012,11 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "hyp",
     "color": "#00D4FF",
     "icon": "bolt",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm",
+      "tts"
+    ]
   },
   {
     "id": "inworld",
@@ -755,7 +1025,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "inworld",
     "color": "#FF6B6B",
     "icon": "record_voice_over",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "tts"
+    ]
   },
   {
     "id": "jina-ai",
@@ -764,7 +1037,11 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "jina",
     "color": "#2563EB",
     "icon": "blur_on",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "webSearch",
+      "web"
+    ]
   },
   {
     "id": "jina-reader",
@@ -773,7 +1050,11 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "jina-reader",
     "color": "#000000",
     "icon": "menu_book",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "webFetch",
+      "web"
+    ]
   },
   {
     "id": "kimi-coding",
@@ -782,7 +1063,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "kimi-coding",
     "color": "#888888",
     "icon": "dns",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "linkup",
@@ -791,7 +1075,11 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "linkup",
     "color": "#0EA5E9",
     "icon": "link",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "webSearch",
+      "web"
+    ]
   },
   {
     "id": "llm7",
@@ -800,7 +1088,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "llm7",
     "color": "#7C3AED",
     "icon": "pool",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "minimax-cn",
@@ -809,7 +1100,12 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "minimax-cn",
     "color": "#DC2626",
     "icon": "memory",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm",
+      "image",
+      "tts"
+    ]
   },
   {
     "id": "minimax",
@@ -818,7 +1114,12 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "minimax",
     "color": "#7C3AED",
     "icon": "memory",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm",
+      "image",
+      "tts"
+    ]
   },
   {
     "id": "mistral",
@@ -827,7 +1128,11 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "mistral",
     "color": "#FF7000",
     "icon": "air",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm",
+      "embedding"
+    ]
   },
   {
     "id": "morph",
@@ -836,7 +1141,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "morph",
     "color": "#14B8A6",
     "icon": "change_history",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "nanobanana",
@@ -845,7 +1153,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "nb",
     "color": "#FFD700",
     "icon": "extension",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "image"
+    ]
   },
   {
     "id": "nebius",
@@ -854,7 +1165,11 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "nebius",
     "color": "#6C5CE7",
     "icon": "cloud",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm",
+      "embedding"
+    ]
   },
   {
     "id": "ollama-local",
@@ -863,7 +1178,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "ollama-local",
     "color": "#ffffffff",
     "icon": "cloud",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "ollama-search",
@@ -872,7 +1190,11 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "ollama-search",
     "color": "#ffffff",
     "icon": "cloud",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "webSearch",
+      "web"
+    ]
   },
   {
     "id": "openai",
@@ -881,7 +1203,14 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "openai",
     "color": "#10A37F",
     "icon": "auto_awesome",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm",
+      "image",
+      "tts",
+      "stt",
+      "embedding"
+    ]
   },
   {
     "id": "openai-intent",
@@ -890,7 +1219,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "openai-intent",
     "color": "#888888",
     "icon": "dns",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "opencode-go",
@@ -899,7 +1231,14 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "ocg",
     "color": "#E87040",
     "icon": "terminal",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm",
+      "image",
+      "video",
+      "tts",
+      "embedding"
+    ]
   },
   {
     "id": "originator",
@@ -908,7 +1247,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "originator",
     "color": "#888888",
     "icon": "dns",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "perplexity",
@@ -917,7 +1259,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "pplx",
     "color": "#20808D",
     "icon": "search",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "perplexity-agent",
@@ -926,7 +1271,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "pa",
     "color": "#20808D",
     "icon": "travel_explore",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "playht",
@@ -935,7 +1283,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "playht",
     "color": "#00B4D8",
     "icon": "play_circle",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "tts"
+    ]
   },
   {
     "id": "recraft",
@@ -944,7 +1295,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "recraft",
     "color": "#EC4899",
     "icon": "image",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "image"
+    ]
   },
   {
     "id": "runwayml",
@@ -953,7 +1307,11 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "runway",
     "color": "#000000",
     "icon": "movie",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "image",
+      "video"
+    ]
   },
   {
     "id": "sambanova",
@@ -962,7 +1320,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "samba",
     "color": "#F97316",
     "icon": "memory",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "sdwebui",
@@ -971,7 +1332,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "sdwebui",
     "color": "#FF7043",
     "icon": "brush",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "image"
+    ]
   },
   {
     "id": "searchapi",
@@ -980,7 +1344,11 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "searchapi",
     "color": "#0EA5A4",
     "icon": "search",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "webSearch",
+      "web"
+    ]
   },
   {
     "id": "serper",
@@ -989,7 +1357,11 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "serper",
     "color": "#4F46E5",
     "icon": "search",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "webSearch",
+      "web"
+    ]
   },
   {
     "id": "siliconflow",
@@ -998,7 +1370,11 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "siliconflow",
     "color": "#5B6EF5",
     "icon": "cloud_queue",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm",
+      "image"
+    ]
   },
   {
     "id": "stability-ai",
@@ -1007,7 +1383,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "stability",
     "color": "#8B5CF6",
     "icon": "image",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "image"
+    ]
   },
   {
     "id": "tavily",
@@ -1016,7 +1395,11 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "tavily",
     "color": "#5B21B6",
     "icon": "search",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "webSearch",
+      "web"
+    ]
   },
   {
     "id": "tencent",
@@ -1025,7 +1408,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "hunyuan",
     "color": "#0052D9",
     "icon": "cloud",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "together",
@@ -1034,7 +1420,12 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "together",
     "color": "#0F6FFF",
     "icon": "group_work",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm",
+      "image",
+      "embedding"
+    ]
   },
   {
     "id": "tokenrouter",
@@ -1043,7 +1434,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "tokenrouter",
     "color": "#0EA5E9",
     "icon": "hub",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "topaz",
@@ -1052,7 +1446,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "topaz",
     "color": "#059669",
     "icon": "image",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "image"
+    ]
   },
   {
     "id": "trae",
@@ -1061,7 +1458,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "trae",
     "color": "#888888",
     "icon": "dns",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "user-agent",
@@ -1070,7 +1470,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "user-agent",
     "color": "#888888",
     "icon": "dns",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "venice",
@@ -1079,7 +1482,12 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "venice",
     "color": "#DC2626",
     "icon": "shield",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm",
+      "image",
+      "embedding"
+    ]
   },
   {
     "id": "vercel-ai-gateway",
@@ -1088,7 +1496,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "vercel",
     "color": "#111827",
     "icon": "deployed_code",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "vertex-partner",
@@ -1097,7 +1508,11 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "vxp",
     "color": "#34A853",
     "icon": "cloud",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm",
+      "video"
+    ]
   },
   {
     "id": "volcengine-ark",
@@ -1106,7 +1521,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "ark",
     "color": "#1677FF",
     "icon": "cloud",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "voyage-ai",
@@ -1115,7 +1533,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "voyage",
     "color": "#0EA5E9",
     "icon": "data_array",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "embedding"
+    ]
   },
   {
     "id": "windsurf",
@@ -1124,7 +1545,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "windsurf",
     "color": "#888888",
     "icon": "dns",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "x-codebuddy-request",
@@ -1133,7 +1557,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "x-codebuddy-request",
     "color": "#888888",
     "icon": "dns",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "x-github-api-version",
@@ -1142,7 +1569,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "x-github-api-version",
     "color": "#888888",
     "icon": "dns",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "x-requested-with",
@@ -1151,7 +1581,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "x-requested-with",
     "color": "#888888",
     "icon": "dns",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "x-vscode-user-agent-library-version",
@@ -1160,7 +1593,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "x-vscode-user-agent-library-version",
     "color": "#888888",
     "icon": "dns",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "xiaomi-tokenplan",
@@ -1169,7 +1605,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "xmtp",
     "color": "#FF6700",
     "icon": "smart_toy",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "xquik",
@@ -1178,7 +1617,11 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "xquik",
     "color": "#5C3327",
     "icon": "tag",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "webSearch",
+      "web"
+    ]
   },
   {
     "id": "youcom",
@@ -1187,7 +1630,11 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "youcom",
     "color": "#7C3AED",
     "icon": "search",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "webSearch",
+      "web"
+    ]
   },
   {
     "id": "zai-search",
@@ -1196,7 +1643,11 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "zai-search",
     "color": "#888888",
     "icon": "dns",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "webSearch",
+      "web"
+    ]
   },
   {
     "id": "grok-web",
@@ -1205,7 +1656,10 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "gw",
     "color": "#1DA1F2",
     "icon": "auto_awesome",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
   },
   {
     "id": "perplexity-web",
@@ -1214,8 +1668,66 @@ export const PROVIDER_CATALOG: ProviderCatalogItem[] = [
     "alias": "pw",
     "color": "#20808D",
     "icon": "search",
-    "noAuth": false
+    "noAuth": false,
+    "serviceKinds": [
+      "llm"
+    ]
+  },
+  {
+    "id": "selfhosted-tts",
+    "name": "Self-Hosted TTS",
+    "category": "apikey",
+    "alias": "selfhosted-tts",
+    "color": "#10B981",
+    "icon": "volume_up",
+    "noAuth": true,
+    "serviceKinds": [
+      "tts"
+    ]
+  },
+  {
+    "id": "selfhosted-stt",
+    "name": "Self-Hosted STT",
+    "category": "apikey",
+    "alias": "selfhosted-stt",
+    "color": "#3B82F6",
+    "icon": "mic",
+    "noAuth": true,
+    "serviceKinds": [
+      "stt"
+    ]
+  },
+  {
+    "id": "selfhosted-embedding",
+    "name": "Self-Hosted Embedding",
+    "category": "apikey",
+    "alias": "selfhosted-embedding",
+    "color": "#8B5CF6",
+    "icon": "layers",
+    "noAuth": true,
+    "serviceKinds": [
+      "embedding"
+    ]
   }
 ]
 
 export const PROVIDER_CATALOG_MAP = new Map(PROVIDER_CATALOG.map((p) => [p.id, p]))
+
+export function isChatProvider(p: ProviderCatalogItem): boolean {
+  return (p.serviceKinds ?? ['llm']).includes('llm')
+}
+
+export function getProvidersByKind(kind: string): ProviderCatalogItem[] {
+  return PROVIDER_CATALOG.filter((p) => (p.serviceKinds ?? ['llm']).includes(kind))
+}
+
+export const MEDIA_PROVIDER_KINDS = [
+  'embedding',
+  'image',
+  'tts',
+  'stt',
+  'video',
+  'webSearch',
+  'webFetch',
+  'web',
+] as const

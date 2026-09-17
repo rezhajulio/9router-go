@@ -2,11 +2,7 @@
   import { api, type ProviderConnection, type ProviderNode, type Settings } from '../../api/client'
   import { PROVIDER_CATALOG } from '../../lib/providers'
   import { getModelsByProviderId, PROVIDER_ID_TO_ALIAS } from '../../lib/models'
-  import {
-    buildAvailableModels,
-    fetchProviderModelsData,
-    type CustomModelData
-  } from './types'
+  import { buildAvailableModels, fetchProviderModelsData, isChatModel, type CustomModelData } from './types'
   import ProviderDetailBanner from './ProviderDetailBanner.svelte'
   import ConnectionsListCard from './ConnectionsListCard.svelte'
   import AvailableModelsCard from './AvailableModelsCard.svelte'
@@ -15,27 +11,12 @@
   import AddCompatibleNodeModal from './AddCompatibleNodeModal.svelte'
   import AddCustomModelModal from './AddCustomModelModal.svelte'
 
-  interface Props {
-    connections?: ProviderConnection[]
-    providerNodes?: ProviderNode[]
-    onRefresh: () => void
-    selectedProviderId?: string | null
-  }
+  interface Props { connections?: ProviderConnection[]; providerNodes?: ProviderNode[]; onRefresh: () => void; selectedProviderId?: string | null }
 
-  let {
-    connections = [],
-    providerNodes = [],
-    onRefresh,
-    selectedProviderId = $bindable(null),
-  }: Props = $props()
+  let { connections = [], providerNodes = [], onRefresh, selectedProviderId = $bindable(null) }: Props = $props()
 
   // Modals
-  let showAddOpenAIModal = $state(false)
-  let showAddAnthropicModal = $state(false)
-  let showAddKeyModal = $state(false)
-  let showAddCustomModelModal = $state(false)
-  let isSubmitting = $state(false)
-  let copiedId = $state<string | null>(null)
+  let showAddOpenAIModal = $state(false), showAddAnthropicModal = $state(false), showAddKeyModal = $state(false), showAddCustomModelModal = $state(false), isSubmitting = $state(false), copiedId = $state<string | null>(null)
   let customModels = $state<CustomModelData[]>([])
   let disabledModelIds = $state<string[]>([])
   let settings = $state<Settings | null>(null)
@@ -74,9 +55,11 @@
     selectedNode?.id || selectedCatalogItem?.alias || (selectedProviderId ? PROVIDER_ID_TO_ALIAS[selectedProviderId] : '') || selectedProviderId || ''
   )
   let currentDisplayAlias = $derived(currentStorageAlias)
-  let builtInModels = $derived(selectedProviderId ? getModelsByProviderId(selectedProviderId) : [])
+  let builtInModels = $derived(
+    selectedProviderId ? getModelsByProviderId(selectedProviderId).filter(isChatModel) : []
+  )
   let providerCustomModels = $derived(
-    customModels.filter((m) => m.providerAlias === currentStorageAlias || m.providerAlias === selectedProviderId)
+    customModels.filter((m) => (m.providerAlias === currentStorageAlias || m.providerAlias === selectedProviderId) && isChatModel(m))
   )
   let allAvailableModels = $derived(buildAvailableModels(builtInModels, providerCustomModels))
   async function loadModels(providerId: string, storageAlias: string) {

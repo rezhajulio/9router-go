@@ -1,25 +1,17 @@
 <script lang="ts">
-  import {
-    AlertTriangle,
-    Bot,
-    Plus,
-    RotateCcw,
-    X
-  } from 'lucide-svelte'
+  import { AlertTriangle, Bot, Plus, RotateCcw, X } from 'lucide-svelte'
   import { api, type FreebuffSessionStatusResponse } from '../../api/client'
   import Badge from '../../lib/ui/Badge.svelte'
   import Button from '../../lib/ui/Button.svelte'
   import Card from '../../lib/ui/Card.svelte'
-  import type { ModelItem } from './types'
+  import { isChatModel, type ModelItem } from './types'
   import AvailableModelItem from './AvailableModelItem.svelte'
+  import DisabledModelsPills from './DisabledModelsPills.svelte'
+  import FreebuffSessionBanner from './FreebuffSessionBanner.svelte'
   interface Props {
-    storageAlias: string
-    displayAlias: string
-    allAvailableModels: ModelItem[]
-    disabledModelIds: string[]
-    connectionId?: string
-    onAddCustomModel: () => void
-    onDisabledModelsChange: (newDisabledIds: string[]) => void
+    storageAlias: string; displayAlias: string; allAvailableModels: ModelItem[]
+    disabledModelIds: string[]; connectionId?: string
+    onAddCustomModel: () => void; onDisabledModelsChange: (newDisabledIds: string[]) => void
   }
 
   let {
@@ -91,16 +83,18 @@
   let modelsTestError = $state('')
   let copiedModelId = $state<string | null>(null)
 
+  let chatAvailableModels = $derived(allAvailableModels.filter(isChatModel))
+
   let displayModels = $derived(
-    allAvailableModels.filter((m) => !disabledModelIds.includes(m.id))
+    chatAvailableModels.filter((m) => !disabledModelIds.includes(m.id))
   )
 
   let disabledDisplayModels = $derived(
-    allAvailableModels.filter((m) => disabledModelIds.includes(m.id))
+    chatAvailableModels.filter((m) => disabledModelIds.includes(m.id))
   )
 
   let hasReasoningModels = $derived(
-    allAvailableModels.some((m) => m.caps.reasoning)
+    chatAvailableModels.some((m) => m.caps.reasoning)
   )
 
   async function handleTestModel(modelId: string, fullModel: string) {
@@ -147,7 +141,7 @@
 
   async function handleDisableAll() {
     if (!storageAlias) return
-    const allIds = allAvailableModels.map((m) => m.id)
+    const allIds = chatAvailableModels.map((m) => m.id)
     onDisabledModelsChange(allIds)
     try {
       await api.saveDisabledModels(storageAlias, allIds)
@@ -167,7 +161,7 @@
   }
 
   function copyModel(fullModel: string, modelId: string) {
-    const model = allAvailableModels.find((m) => m.id === modelId)
+    const model = chatAvailableModels.find((m) => m.id === modelId)
     const isReasoning = model?.caps.reasoning ?? false
     const textToCopy =
       isReasoning && thinkingMode && thinkingMode !== 'auto'
@@ -233,39 +227,18 @@
       </button>
     </div>
   {/if}
-  {#if isFreebuff && freebuffSession?.status === 'active' && freebuffSession?.currentModel}
-    <div class="mt-4 p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200 text-xs flex items-start gap-3 leading-relaxed shadow-xs">
-      <span class="text-base shrink-0 leading-none">🔒</span>
-      <div class="flex-1 min-w-0">
-        <div class="flex items-center justify-between gap-2 flex-wrap">
-          <p class="font-semibold text-sm text-emerald-900 dark:text-emerald-100">
-            Active Session: <span class="font-mono bg-emerald-500/20 px-1.5 py-0.5 rounded text-xs">{freebuffSession.currentModel}</span>
-            {#if sessionExpiresInMin !== null}
-              <span class="font-normal text-xs text-emerald-700 dark:text-emerald-300 ml-1">
-                ({sessionExpiresInMin > 0 ? `Expires in ${sessionExpiresInMin} min` : 'Expires soon'})
-              </span>
-            {/if}
-          </p>
-          <button
-            type="button"
-            title="Refresh session status"
-            disabled={isLoadingSession}
-            onclick={loadFreebuffSession}
-            class="p-1 rounded-md text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20 transition-colors cursor-pointer"
-          >
-            <RotateCcw class="w-3.5 h-3.5 {isLoadingSession ? 'animate-spin' : ''}" />
-          </button>
-        </div>
-        <p class="mt-1 text-emerald-700/90 dark:text-emerald-300/90">
-          Freebuff limits each account to 1 model per hour. Other models are locked until this session expires.
-        </p>
-      </div>
-    </div>
+  {#if isFreebuff}
+    <FreebuffSessionBanner
+      session={freebuffSession}
+      isLoading={isLoadingSession}
+      expiresInMin={sessionExpiresInMin}
+      onRefresh={loadFreebuffSession}
+    />
   {/if}
 
 
   <div class="mt-4 flex flex-col gap-4">
-    {#if allAvailableModels.length === 0}
+    {#if chatAvailableModels.length === 0}
       <div class="py-12 flex flex-col items-center justify-center text-center gap-3 text-text-muted">
         <Bot class="w-8 h-8 opacity-40" />
         <p class="text-sm">No models registered for this provider yet.</p>
@@ -306,26 +279,10 @@
         </button>
       </div>
 
-      {#if disabledDisplayModels.length > 0}
-        <div class="pt-3 border-t border-border flex flex-col gap-2">
-          <div class="text-xs font-medium text-text-muted">
-            Disabled models ({disabledDisplayModels.length})
-          </div>
-          <div class="flex flex-wrap gap-1.5">
-            {#each disabledDisplayModels as m (m.id)}
-              <button
-                type="button"
-                onclick={() => handleEnableModel(m.id)}
-                class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-mono bg-surface-2 hover:bg-surface-3 text-text-muted hover:text-text-main border border-border transition-colors cursor-pointer"
-                title="Enable model {m.id}"
-              >
-                <span>+</span>
-                <span>{m.id}</span>
-              </button>
-            {/each}
-          </div>
-        </div>
-      {/if}
+      <DisabledModelsPills
+        disabledModels={disabledDisplayModels}
+        onEnableModel={handleEnableModel}
+      />
     {/if}
   </div>
 </Card>

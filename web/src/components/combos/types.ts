@@ -1,4 +1,4 @@
-import type { Combo, ProviderNode } from '../../api/client'
+import type { Combo } from '../../api/client'
 
 export interface ComboStrategyInfo {
   fallbackStrategy?: string
@@ -16,13 +16,6 @@ export interface CapacityAdapterState {
   audioInput: AdapterPool
 }
 
-export interface PickerModelItem {
-  value: string
-  label: string
-  provider: string
-  vision: boolean
-  reasoning: boolean
-}
 
 export function hasVision(model: string): boolean {
   const m = model.toLowerCase()
@@ -68,51 +61,6 @@ export function getComboModels(c: Combo): string[] {
   return []
 }
 
-export function computeAvailableModels(
-  providerNodes: ProviderNode[],
-  combos: Combo[]
-): PickerModelItem[] {
-  const list: PickerModelItem[] = []
-  const seen = new Set<string>()
-
-  for (const node of providerNodes) {
-    const p = node.id
-    const nodeWithModels = node as ProviderNode & { models?: string[] }
-    if (nodeWithModels.models && Array.isArray(nodeWithModels.models)) {
-      for (const m of nodeWithModels.models) {
-        const val = `${p}/${m}`
-        if (!seen.has(val)) {
-          seen.add(val)
-          list.push({
-            value: val,
-            label: m,
-            provider: node.name || p,
-            vision: hasVision(m),
-            reasoning: hasReasoning(m),
-          })
-        }
-      }
-    }
-  }
-
-  for (const c of combos) {
-    const cms = getComboModels(c)
-    for (const m of cms) {
-      if (!seen.has(m)) {
-        seen.add(m)
-        const prov = m.includes('/') ? m.split('/')[0] : 'combo'
-        list.push({
-          value: m,
-          label: m.includes('/') ? m.split('/')[1] : m,
-          provider: prov,
-          vision: hasVision(m),
-          reasoning: hasReasoning(m),
-        })
-      }
-    }
-  }
-  return list
-}
 
 export function updateComboStrategy(
   currentStrategies: Record<string, ComboStrategyInfo>,

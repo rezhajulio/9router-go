@@ -1,57 +1,87 @@
 <script lang="ts">
-  import { Brain, Eye, Plus, Search, X } from 'lucide-svelte'
-  import type { PickerModelItem } from './types'
+  import { Info, Layers, Search, X } from 'lucide-svelte'
+  import type { Combo, ProviderConnection, ProviderNode } from '../../api/client'
+  import ModelPill from './ModelPill.svelte'
+  import {
+    resolveFilteredCombos,
+    resolveFilteredGroups,
+    resolveModelPickerGroups,
+  } from './pickerData'
 
   interface Props {
     isOpen: boolean
     target: 'combo' | 'vision' | 'audio' | 'judge'
-    availableModels: PickerModelItem[]
+    connections?: ProviderConnection[]
+    combos?: Combo[]
+    providerNodes?: ProviderNode[]
+    currentComboName?: string
+    addedModelValues?: string[]
     onSelect: (modelValue: string) => void
+    onDeselect?: (modelValue: string) => void
     onClose: () => void
   }
 
   let {
     isOpen,
     target,
-    availableModels = [],
+    connections = [],
+    combos = [],
+    providerNodes = [],
+    currentComboName,
+    addedModelValues = [],
     onSelect,
+    onDeselect,
     onClose,
   }: Props = $props()
 
-  let search = $state('')
+  let searchQuery = $state('')
   let customModelInput = $state('')
 
   $effect(() => {
     if (isOpen) {
-      search = ''
+      searchQuery = ''
       customModelInput = ''
     }
   })
 
-  let filteredModels = $derived(() => {
-    return availableModels.filter((item) => {
-      if (target === 'vision' && !item.vision) {
-        if (!search.trim()) return item.vision
+  let groups = $derived(resolveModelPickerGroups(connections, providerNodes))
+  let filteredCombos = $derived(
+    resolveFilteredCombos(combos, currentComboName, searchQuery, target)
+  )
+  let filteredGroups = $derived(
+    resolveFilteredGroups(groups, searchQuery, target)
+  )
+
+  function handleToggle(val: string) {
+    if (addedModelValues.includes(val)) {
+      if (onDeselect) {
+        onDeselect(val)
+      } else {
+        onSelect(val)
       }
-      if (search.trim()) {
-        const q = search.toLowerCase()
-        return item.value.toLowerCase().includes(q) || item.provider.toLowerCase().includes(q)
-      }
-      return true
-    })
-  })
+    } else {
+      onSelect(val)
+    }
+  }
 
   function handleCustomAdd() {
     const val = customModelInput.trim()
     if (val) {
-      onSelect(val)
+      handleToggle(val)
+      customModelInput = ''
     }
   }
 </script>
 
 {#if isOpen}
-  <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-    <div class="bg-surface border border-border rounded-xl shadow-2xl max-w-md w-full overflow-hidden flex flex-col max-h-[85vh]">
+  <div class="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+    <div class="fixed inset-0" onclick={onClose} aria-hidden="true"></div>
+    <div
+      class="relative bg-surface border border-border rounded-xl shadow-2xl max-w-lg w-full overflow-hidden flex flex-col max-h-[85vh] z-10"
+      role="dialog"
+      aria-modal="true"
+    >
+      <!-- Header -->
       <div class="px-5 py-4 border-b border-border flex items-center justify-between">
         <h2 class="text-sm font-semibold text-text-main">
           {target === 'vision'
@@ -62,29 +92,47 @@
                 ? 'Select Judge Model'
                 : 'Add Model to Combo'}
         </h2>
-        <button type="button" onclick={onClose} class="text-text-muted hover:text-text-main cursor-pointer">
+        <button
+          type="button"
+          onclick={onClose}
+          aria-label="Close"
+          class="text-text-muted hover:text-text-main cursor-pointer"
+        >
           <X class="w-4 h-4" />
         </button>
       </div>
 
-      <div class="p-4 border-b border-border space-y-2">
-        <div class="relative">
-          <Search class="w-3.5 h-3.5 absolute left-3 top-2.5 text-text-muted pointer-events-none" />
-          <input
-            type="text"
-            bind:value={search}
-            placeholder="Search active models..."
-            class="w-full bg-surface-2 border border-border rounded-lg pl-9 pr-3 py-1.5 text-xs text-text-main placeholder:text-text-muted focus:outline-none focus:border-brand-500"
-          />
+      <!-- Search & Custom Model Area -->
+      <div class="p-4 border-b border-border">
+        <!-- Info bar -->
+        <div class="flex items-center gap-2 mb-3 px-2.5 py-2 bg-brand-500/10 border border-brand-500/20 rounded-lg text-xs text-text-muted">
+          <Info class="w-3.5 h-3.5 text-brand-500 shrink-0" />
+          <span>Click to add, click again to remove. Changes are saved automatically.</span>
         </div>
 
-        <!-- Custom model string -->
+        <!-- Search -->
+        <div class="mb-2.5">
+          <div class="relative">
+            <Search class="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Search..."
+              bind:value={searchQuery}
+              class="w-full bg-surface-2 border border-border rounded-lg pl-8 pr-3 py-1.5 text-xs text-text-main placeholder:text-text-muted focus:outline-none focus:border-brand-500"
+            />
+          </div>
+        </div>
+
+        <!-- Custom model input -->
         <div class="flex items-center gap-1.5">
           <input
             type="text"
             bind:value={customModelInput}
             placeholder="Or type custom model ID..."
             class="flex-1 bg-surface-2 border border-border rounded-lg px-2.5 py-1 text-xs text-text-main placeholder:text-text-muted font-mono focus:outline-none focus:border-brand-500"
+            onkeydown={(e) => {
+              if (e.key === 'Enter') handleCustomAdd()
+            }}
           />
           <button
             type="button"
@@ -97,35 +145,70 @@
         </div>
       </div>
 
-      <!-- Models List -->
-      <div class="p-2 overflow-y-auto flex-1 max-h-[350px] space-y-1">
-        {#if filteredModels().length === 0}
-          <div class="text-center py-8 text-xs text-text-muted">
-            No matching models found. You can type a custom model above.
+      <!-- Categories & Models List -->
+      <div class="p-4 overflow-y-auto flex-1 max-h-[400px] space-y-3">
+        <!-- Combos section - always first -->
+        {#if filteredCombos.length > 0}
+          <div>
+            <div class="flex items-center gap-1.5 mb-1.5 sticky top-0 bg-surface py-0.5 z-10">
+              <Layers class="w-3.5 h-3.5 text-brand-500 shrink-0" />
+              <span class="text-xs font-medium text-brand-500">Combos</span>
+              <span class="text-[10px] text-text-muted">({filteredCombos.length})</span>
+            </div>
+            <div class="flex flex-wrap gap-1.5">
+              {#each filteredCombos as combo (combo.id)}
+                <ModelPill
+                  label={combo.name}
+                  value={combo.name}
+                  isAdded={addedModelValues.includes(combo.name)}
+                  onClick={() => handleToggle(combo.name)}
+                />
+              {/each}
+            </div>
           </div>
-        {:else}
-          {#each filteredModels() as item}
-            <button
-              type="button"
-              onclick={() => onSelect(item.value)}
-              class="w-full text-left flex items-center justify-between px-3 py-2 rounded-lg hover:bg-surface-2 transition-colors cursor-pointer border border-transparent hover:border-border"
-            >
-              <div class="min-w-0 flex-1 pr-2">
-                <div class="flex items-center gap-1.5">
-                  <span class="font-mono text-xs font-medium text-text-main truncate">{item.value}</span>
-                  {#if item.vision}
-                    <Eye class="w-3.5 h-3.5 text-blue-500 shrink-0" title="Vision — Supports image input" />
-                  {/if}
-                  {#if item.reasoning}
-                    <Brain class="w-3.5 h-3.5 text-amber-500 shrink-0" title="Reasoning / Neuron — Supports thinking" />
-                  {/if}
-                </div>
-                <span class="text-[10px] text-text-muted">{item.provider}</span>
-              </div>
-              <Plus class="w-4 h-4 text-text-muted hover:text-brand-500 shrink-0" />
-            </button>
-          {/each}
         {/if}
+
+        <!-- Provider sections -->
+        {#each filteredGroups as group (group.id)}
+          <div>
+            <div class="flex items-center gap-1.5 mb-1.5 sticky top-0 bg-surface py-0.5 z-10">
+              <span class="text-xs font-medium text-brand-500">
+                {group.name}
+              </span>
+              <span class="text-[10px] text-text-muted">
+                ({group.models.length})
+              </span>
+            </div>
+            <div class="flex flex-wrap gap-1.5">
+              {#each group.models as model (model.value)}
+                <ModelPill
+                  label={model.name}
+                  value={model.value}
+                  isAdded={addedModelValues.includes(model.value)}
+                  caps={model.caps}
+                  onClick={() => handleToggle(model.value)}
+                />
+              {/each}
+            </div>
+          </div>
+        {/each}
+
+        {#if filteredCombos.length === 0 && filteredGroups.length === 0}
+          <div class="text-center py-6 text-xs text-text-muted">
+            No models found. You can type a custom model above.
+          </div>
+        {/if}
+      </div>
+
+      <!-- Footer -->
+      <div class="px-5 py-3 border-t border-border flex items-center justify-end bg-surface-2/50">
+        <button
+          type="button"
+          onclick={onClose}
+          class="px-4 py-1.5 text-xs bg-brand-500 hover:bg-brand-600 text-white font-medium rounded-lg shadow-sm transition cursor-pointer"
+        >
+          Done
+        </button>
       </div>
     </div>
   </div>

@@ -3,7 +3,6 @@
   import { api, type Combo, type ProviderConnection, type ProviderNode } from '../../api/client'
   import {
     clearJudgeModel,
-    computeAvailableModels,
     getComboModels,
     parseCapacityAdapterSettings,
     updateComboStrategy,
@@ -67,14 +66,9 @@
     }
   }
 
+  $effect(() => { loadSettings() })
   $effect(() => {
-    loadSettings()
-  })
-
-  $effect(() => {
-    if (isCreatingOpen && !editingCombo) {
-      modalModels = []
-    }
+    if (isCreatingOpen && !editingCombo) modalModels = []
   })
 
   function copyName(name: string, id: string) {
@@ -131,13 +125,11 @@
     modalModels = []
     isCreatingOpen = true
   }
-
   function openEditModal(combo: Combo) {
     editingCombo = combo
     modalModels = [...getComboModels(combo)]
     isCreatingOpen = true
   }
-
   function closeModal() {
     isCreatingOpen = false
     editingCombo = null
@@ -166,37 +158,50 @@
     showModelPicker = true
   }
 
-  function selectModel(modelValue: string) {
+  let addedModelValues = $derived.by(() => {
+    if (modelPickerTarget === 'combo') return modalModels
+    if (modelPickerTarget === 'vision') return capacityAdapter.vision.models
+    if (modelPickerTarget === 'audio') return capacityAdapter.audioInput.models
+    if (modelPickerTarget === 'judge') {
+      const judge = editingCombo?.name ? comboStrategies[editingCombo.name]?.judgeModel : undefined
+      return judge ? [judge] : []
+    }
+    return []
+  })
+
+  function handleSelectModel(val: string) {
     if (modelPickerTarget === 'combo') {
-      if (!modalModels.includes(modelValue)) {
-        modalModels = [...modalModels, modelValue]
-      }
+      if (!modalModels.includes(val)) modalModels = [...modalModels, val]
     } else if (modelPickerTarget === 'vision') {
-      if (!capacityAdapter.vision.models.includes(modelValue)) {
-        saveCapacityAdapter({
-          ...capacityAdapter,
-          vision: {
-            ...capacityAdapter.vision,
-            models: [...capacityAdapter.vision.models, modelValue],
-          },
-        })
+      const cur = capacityAdapter.vision.models
+      if (!cur.includes(val)) {
+        saveCapacityAdapter({ ...capacityAdapter, vision: { ...capacityAdapter.vision, models: [...cur, val] } })
       }
     } else if (modelPickerTarget === 'audio') {
-      if (!capacityAdapter.audioInput.models.includes(modelValue)) {
-        saveCapacityAdapter({
-          ...capacityAdapter,
-          audioInput: {
-            ...capacityAdapter.audioInput,
-            models: [...capacityAdapter.audioInput.models, modelValue],
-          },
-        })
+      const cur = capacityAdapter.audioInput.models
+      if (!cur.includes(val)) {
+        saveCapacityAdapter({ ...capacityAdapter, audioInput: { ...capacityAdapter.audioInput, models: [...cur, val] } })
       }
     } else if (modelPickerTarget === 'judge' && editingCombo) {
-      handleSetJudge(editingCombo.name, modelValue)
+      handleSetJudge(editingCombo.name, val)
+      showModelPicker = false
     }
-    showModelPicker = false
   }
 
+  function handleDeselectModel(val: string) {
+    if (modelPickerTarget === 'combo') {
+      modalModels = modalModels.filter((m) => m !== val)
+    } else if (modelPickerTarget === 'vision') {
+      const cur = capacityAdapter.vision.models
+      saveCapacityAdapter({ ...capacityAdapter, vision: { ...capacityAdapter.vision, models: cur.filter((m) => m !== val) } })
+    } else if (modelPickerTarget === 'audio') {
+      const cur = capacityAdapter.audioInput.models
+      saveCapacityAdapter({ ...capacityAdapter, audioInput: { ...capacityAdapter.audioInput, models: cur.filter((m) => m !== val) } })
+    } else if (modelPickerTarget === 'judge' && editingCombo) {
+      clearJudge(editingCombo.name)
+      showModelPicker = false
+    }
+  }
   async function handleDeleteCombo() {
     if (!deletingCombo) return
     try {
@@ -208,7 +213,6 @@
     }
   }
 
-  let availableModels = $derived(computeAvailableModels(providerNodes, combos))
 </script>
 
 <div class="flex min-w-0 flex-col gap-6 px-1 sm:px-0">
@@ -239,10 +243,7 @@
           strategyInfo={comboStrategies[combo.name]}
           {copiedId}
           onSetStrategy={handleSetStrategy}
-          onOpenJudgePicker={(c) => {
-            editingCombo = c
-            openModelPicker('judge')
-          }}
+          onOpenJudgePicker={(c) => { editingCombo = c; openModelPicker('judge') }}
           onClearJudge={clearJudge}
           onCopy={copyName}
           onEdit={openEditModal}
@@ -276,8 +277,13 @@
 <ModelPickerModal
   isOpen={showModelPicker}
   target={modelPickerTarget}
-  {availableModels}
-  onSelect={selectModel}
+  {connections}
+  {combos}
+  {providerNodes}
+  currentComboName={editingCombo?.name}
+  {addedModelValues}
+  onSelect={handleSelectModel}
+  onDeselect={handleDeselectModel}
   onClose={() => (showModelPicker = false)}
 />
 

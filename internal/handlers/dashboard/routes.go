@@ -33,6 +33,7 @@ func RegisterRoutes(r chi.Router, h *DashboardHandler) {
 		r.Get("/connections", h.HandleGetConnections)
 		r.Post("/connections", h.HandleCreateConnection)
 		r.Put("/connections/{id}", h.HandleUpdateConnection)
+		r.Put("/providers/{id}", h.HandleUpdateConnection)
 		r.Delete("/connections/{id}", h.HandleDeleteConnection)
 
 		// Provider Nodes (Custom Endpoints)

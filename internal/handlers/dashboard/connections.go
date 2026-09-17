@@ -124,13 +124,8 @@ func (h *DashboardHandler) HandleUpdateConnection(w http.ResponseWriter, r *http
 	}
 	defer r.Body.Close()
 
-	var req struct {
-		Name     string `json:"name"`
-		Priority *int   `json:"priority"`
-		IsActive *bool  `json:"isActive"`
-		Data     any    `json:"data"`
-	}
-	if err := json.Unmarshal(body, &req); err != nil {
+	var rawBody map[string]any
+	if err := json.Unmarshal(body, &rawBody); err != nil {
 		handlerutil.WriteJSONError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
@@ -145,40 +140,93 @@ func (h *DashboardHandler) HandleUpdateConnection(w http.ResponseWriter, r *http
 		return
 	}
 
+	_, hasName := rawBody["name"]
+	_, hasPriority := rawBody["priority"]
+	_, hasData := rawBody["data"]
+	_, hasPSD := rawBody["providerSpecificData"]
+	_, hasAssignedModel := rawBody["assignedModel"]
+	a, hasIsActive := rawBody["isActive"].(bool)
+
 	// Fast path: if only updating active status
-	if req.IsActive != nil && req.Name == "" && req.Priority == nil && req.Data == nil {
-		if err := h.Repo.SetConnectionStatus(id, *req.IsActive); err != nil {
+	if hasIsActive && !hasName && !hasPriority && !hasData && !hasPSD && !hasAssignedModel {
+		if err := h.Repo.SetConnectionStatus(id, a); err != nil {
 			handlerutil.WriteJSONError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		handlerutil.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok", "id": id, "isActive": *req.IsActive})
+		handlerutil.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok", "id": id, "isActive": a})
 		return
 	}
 
-	name := req.Name
-	if name == "" && existing.Name != nil {
+	name := ""
+	if n, ok := rawBody["name"].(string); ok && n != "" {
+		name = n
+	} else if existing.Name != nil {
 		name = *existing.Name
 	}
 	priority := 0
-	if req.Priority != nil {
-		priority = *req.Priority
+	if p, ok := rawBody["priority"].(float64); ok {
+		priority = int(p)
 	} else if existing.Priority != nil {
 		priority = *existing.Priority
 	}
 	isActive := existing.IsActive == 1
-	if req.IsActive != nil {
-		isActive = *req.IsActive
+	if hasIsActive {
+		isActive = a
 	}
+
 	dataStr := existing.Data
-	if req.Data != nil {
-		switch d := req.Data.(type) {
-		case string:
-			dataStr = d
-		default:
-			b, err := json.Marshal(d)
-			if err == nil {
-				dataStr = string(b)
+	if hasData || hasPSD || hasAssignedModel {
+		dataMap := make(map[string]any)
+		if existing.Data != "" {
+			_ = json.Unmarshal([]byte(existing.Data), &dataMap)
+		}
+
+		if hasData && rawBody["data"] != nil {
+			switch d := rawBody["data"].(type) {
+			case string:
+				var m map[string]any
+				if err := json.Unmarshal([]byte(d), &m); err == nil {
+					for k, v := range m {
+						if k == "providerSpecificData" {
+							if psd, ok := v.(map[string]any); ok {
+								mergeMapField(dataMap, "providerSpecificData", psd)
+								continue
+							}
+						}
+						dataMap[k] = v
+					}
+				} else {
+					dataStr = d
+				}
+			case map[string]any:
+				for k, v := range d {
+					if k == "providerSpecificData" {
+						if psd, ok := v.(map[string]any); ok {
+							mergeMapField(dataMap, "providerSpecificData", psd)
+							continue
+						}
+					}
+					dataMap[k] = v
+				}
 			}
+		}
+
+		if hasPSD {
+			if psd, ok := rawBody["providerSpecificData"].(map[string]any); ok {
+				mergeMapField(dataMap, "providerSpecificData", psd)
+			}
+		}
+
+		if hasAssignedModel {
+			if am, ok := rawBody["assignedModel"].(string); ok {
+				dataMap["assignedModel"] = am
+			} else if rawBody["assignedModel"] == nil {
+				delete(dataMap, "assignedModel")
+			}
+		}
+
+		if b, err := json.Marshal(dataMap); err == nil {
+			dataStr = string(b)
 		}
 	}
 
@@ -188,6 +236,17 @@ func (h *DashboardHandler) HandleUpdateConnection(w http.ResponseWriter, r *http
 	}
 
 	handlerutil.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok", "id": id})
+}
+
+func mergeMapField(target map[string]any, key string, source map[string]any) {
+	existing, _ := target[key].(map[string]any)
+	if existing == nil {
+		existing = make(map[string]any)
+	}
+	for k, v := range source {
+		existing[k] = v
+	}
+	target[key] = existing
 }
 
 // HandleDeleteConnection handles DELETE /api/connections/{id}.

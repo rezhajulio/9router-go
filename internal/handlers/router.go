@@ -131,6 +131,7 @@ func SetupRoutes(r interface {
 	r.Get("/api/connections", dashH.HandleGetConnections)
 	r.Post("/api/connections", dashH.HandleCreateConnection)
 	r.Put("/api/connections/{id}", dashH.HandleUpdateConnection)
+	r.Put("/api/providers/{id}", dashH.HandleUpdateConnection)
 	r.Delete("/api/connections/{id}", dashH.HandleDeleteConnection)
 
 	r.Get("/api/provider-nodes", dashH.HandleGetProviderNodes)

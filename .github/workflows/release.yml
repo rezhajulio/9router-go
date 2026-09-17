@@ -20,6 +20,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Build Web SPA
+        run: |
+          cd web
+          bun install --frozen-lockfile
+          bun run build
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:

@@ -10,10 +10,17 @@ AUTO_UPDATE ?= false
 
 LDFLAGS := -s -w -X '9router/proxy/internal/updater.CurrentVersion=$(VERSION)'
 
-.PHONY: build run dev version update test test-short vet bench bench-go cross mitm-enable mitm-disable mitm-status docker docker-build clean help
+.PHONY: build run dev version update test test-short vet bench bench-go cross mitm-enable mitm-disable mitm-status docker docker-build clean help web-build
+
+## web-build — build frontend static assets (Svelte/Vite) into web/dist
+web-build:
+	@if [ ! -f web/dist/index.html ] || [ "$$FORCE" = "1" ]; then \
+		echo "Building web SPA assets..."; \
+		cd web && bun install --frozen-lockfile && bun run build; \
+	fi
 
 ## build — compile binary with version embedding
-build:
+build: web-build
 	go build -ldflags="$(LDFLAGS)" -o $(BINARY_NAME) ./cmd/9router-go/
 
 ## run — start proxy (PORT=20128)
@@ -53,7 +60,7 @@ bench-go:
 	go run ./benchmark/runner.go
 
 ## cross — cross-compile Linux/macOS/Windows release binaries
-cross:
+cross: web-build
 	GOOS=linux GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o $(BINARY_NAME)-linux-amd64 ./cmd/9router-go/
 	GOOS=linux GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -o $(BINARY_NAME)-linux-arm64 ./cmd/9router-go/
 	GOOS=darwin GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o $(BINARY_NAME)-darwin-amd64 ./cmd/9router-go/
@@ -84,6 +91,7 @@ docker-build:
 ## clean — remove build artifacts
 clean:
 	rm -f $(BINARY_NAME) $(BINARY_NAME)-*
+	rm -rf web/dist
 
 ## help — show targets
 help:

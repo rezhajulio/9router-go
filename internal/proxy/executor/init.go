@@ -60,6 +60,7 @@ func RegisterAll() {
 	Register("azure", func() Executor { return ForwardAzure })
 	Register("commandcode", func() Executor { return ForwardCommandcode })
 	Register("qoder", func() Executor { return ForwardQoder })
+	Register("cursor", func() Executor { return ForwardCursor })
 	Register("alims-intl", func() Executor { return ForwardOpenAI })
 	Register("api-airforce", func() Executor { return ForwardOpenAI })
 	Register("baidu", func() Executor { return ForwardOpenAI })

@@ -22,7 +22,11 @@ const (
 	cursorModelsHost     = "agent.api5.cursor.sh"
 	cursorModelsURL      = "https://agent.api5.cursor.sh" + cursorModelsEndpoint
 	modelsCacheTTL       = 5 * time.Minute
+	negativeCacheTTL     = 30 * time.Second
 )
+
+// FetchCursorProtoFunc allows mocking H2 proto fetch in tests.
+var FetchCursorProtoFunc = fetchCursorProtoH2
 
 // ModelEntry represents a single discovered Cursor model.
 type ModelEntry struct {
@@ -129,8 +133,15 @@ func ResolveCursorModels(ctx context.Context, accessToken, machineID string, gho
 	delete(headers, "connect-accept-encoding")
 	delete(headers, "connect-protocol-version")
 
-	payload, err := fetchCursorProtoH2(reqCtx, cursorModelsURL, headers)
+	payload, err := FetchCursorProtoFunc(reqCtx, cursorModelsURL, headers)
 	if err != nil {
+		// Cache failure briefly to prevent hammering upstream on every /v1/models call
+		catalogCacheMu.Lock()
+		catalogCache[key] = cachedCatalog{
+			expiresAt: now.Add(negativeCacheTTL),
+			models:    nil,
+		}
+		catalogCacheMu.Unlock()
 		return nil, err
 	}
 

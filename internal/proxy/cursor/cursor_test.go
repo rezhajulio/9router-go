@@ -126,6 +126,39 @@ func TestVisibleComposerContentFromThinking(t *testing.T) {
 	}
 }
 
+func TestCursorUsableModelsParser(t *testing.T) {
+	// Build mock GetUsableModelsResponse: repeated ModelDetails (field 1)
+	m1 := ConcatBuffers(
+		EncodeField(1, WireBytes, "default"),
+		EncodeField(4, WireBytes, "Auto"),
+	)
+	m2 := ConcatBuffers(
+		EncodeField(1, WireBytes, "gpt-5.3-codex"),
+		EncodeField(4, WireBytes, "GPT 5.3 Codex"),
+	)
+	mDuplicate := ConcatBuffers(
+		EncodeField(1, WireBytes, "gpt-5.3-codex"),
+		EncodeField(4, WireBytes, "Duplicate"),
+	)
+
+	payload := ConcatBuffers(
+		EncodeField(1, WireBytes, m1),
+		EncodeField(1, WireBytes, m2),
+		EncodeField(1, WireBytes, mDuplicate),
+	)
+
+	models := ParseCursorUsableModels(payload)
+	if len(models) != 2 {
+		t.Fatalf("expected 2 models after deduplication, got %d", len(models))
+	}
+	if models[0].ID != "default" || models[0].Name != "Auto" {
+		t.Errorf("model 0 mismatch: %+v", models[0])
+	}
+	if models[1].ID != "gpt-5.3-codex" || models[1].Name != "GPT 5.3 Codex" {
+		t.Errorf("model 1 mismatch: %+v", models[1])
+	}
+}
+
 func TestBuildAgentRunFrame(t *testing.T) {
 	msgs := []any{
 		map[string]any{"role": "system", "content": "be brief"},

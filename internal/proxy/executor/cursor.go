@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"9router/proxy/internal/proxy"
+	"9router/proxy/internal/translator"
 
 	cursorpkg "9router/proxy/internal/proxy/cursor"
 )
@@ -48,6 +49,12 @@ func ForwardCursor(w http.ResponseWriter, req *Request) error {
 		if agentErr == nil {
 			return nil
 		}
+		// A failure after the response was committed (the client went away
+		// mid-body) must not start a second upstream turn.
+		var committed *errCursorCommitted
+		if errors.As(agentErr, &committed) {
+			return committed
+		}
 		// AgentService failed before writing anything: try the legacy ChatService.
 		// Neither path returns nil-on-failure anymore, so a 401 here still reaches
 		// the fallback layer (token refresh, combo rotation, usage logging).
@@ -55,11 +62,22 @@ func ForwardCursor(w http.ResponseWriter, req *Request) error {
 		if legacyErr == nil {
 			return nil
 		}
-		if ue := asUpstreamError(legacyErr); ue != nil {
-			return ue
+
+		// Report the most actionable status: an auth failure first (the refresh
+		// path keys off 401/403), then the agent error (the primary path, whose
+		// status reflects token validity), then the legacy error.
+		agentUpstream, legacyUpstream := asUpstreamError(agentErr), asUpstreamError(legacyErr)
+		if isAuthFailure(legacyUpstream) {
+			return legacyUpstream
 		}
-		if ue := asUpstreamError(agentErr); ue != nil {
-			return ue
+		if isAuthFailure(agentUpstream) {
+			return agentUpstream
+		}
+		if agentUpstream != nil {
+			return agentUpstream
+		}
+		if legacyUpstream != nil {
+			return legacyUpstream
 		}
 		return legacyErr
 	}
@@ -108,6 +126,34 @@ func (c *cursorRecorderWriter) Flush() {
 	if flusher, ok := c.ResponseWriter.(http.Flusher); ok {
 		flusher.Flush()
 	}
+}
+
+// recordCursorUsage publishes how much text the turn produced, so usage logging
+// does not fall back to estimating tokens from the raw SSE/JSON bytes mirrored
+// into ResponseBuf (JSON framing inflates that estimate several-fold). Matches
+// the stream.go/openai.go pattern of setting usage on the request context.
+func recordCursorUsage(req *Request, completionChars int) {
+	if req == nil || req.Ctx == nil {
+		return
+	}
+	translator.SetUsage(req.Ctx, &translator.OpenAIUsage{CompletionTokens: completionChars / 4})
+}
+
+// errCursorCommitted wraps a failure that happened after response bytes were
+// written (typically the client disconnecting mid-body). The caller must not
+// treat it as a retryable pre-commit failure.
+type errCursorCommitted struct{ err error }
+
+func (e *errCursorCommitted) Error() string {
+	return "cursor: response already committed: " + e.err.Error()
+}
+
+func (e *errCursorCommitted) Unwrap() error { return e.err }
+
+// isAuthFailure reports whether an upstream error means the credentials were
+// rejected, which is what the token-refresh path reacts to.
+func isAuthFailure(ue *proxy.UpstreamError) bool {
+	return ue != nil && (ue.StatusCode == http.StatusUnauthorized || ue.StatusCode == http.StatusForbidden)
 }
 
 func asUpstreamError(err error) *proxy.UpstreamError {

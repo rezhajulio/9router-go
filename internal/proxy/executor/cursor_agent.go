@@ -79,13 +79,13 @@ func executeCursorAgent(w http.ResponseWriter, req *Request, bodyMap map[string]
 	w = newCursorRecorderWriter(w, req)
 
 	if isStream {
-		return streamCursorAgent(w, session, model, composerModel, responseID, created)
+		return streamCursorAgent(w, req, session, model, composerModel, responseID, created)
 	}
 	return respondCursorAgent(w, session, model, composerModel, responseID, created, req)
 }
 
 // streamCursorAgent relays an AgentService turn as OpenAI SSE chunks.
-func streamCursorAgent(w http.ResponseWriter, session *agentSession, model string, composerModel bool, responseID string, created int64) error {
+func streamCursorAgent(w http.ResponseWriter, req *Request, session *agentSession, model string, composerModel bool, responseID string, created int64) error {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -98,6 +98,9 @@ func streamCursorAgent(w http.ResponseWriter, session *agentSession, model strin
 	emittedText := false
 	streamErr := ""
 	toolIndex := 0
+	completionChars := 0
+	// Published on every exit path, error frames included.
+	defer func() { recordCursorUsage(req, completionChars) }()
 
 	for !finished && streamErr == "" {
 		chunk, readErr := session.ReadChunk()
@@ -119,6 +122,7 @@ func streamCursorAgent(w http.ResponseWriter, session *agentSession, model strin
 							delta := string(sub.Get(1)[0].Value)
 							if delta != "" {
 								emittedText = true
+								completionChars += len(delta)
 								writeSSEChunk(w, flusher, responseID, created, model, delta, nil, "")
 							}
 						}
@@ -136,10 +140,12 @@ func streamCursorAgent(w http.ResponseWriter, session *agentSession, model strin
 										delta := vis[emittedVisible:]
 										emittedVisible = len(vis)
 										emittedText = true
+										completionChars += len(delta)
 										writeSSEChunk(w, flusher, responseID, created, model, delta, nil, "")
 									}
 								} else {
 									// Non-composer models stream thinking as reasoning_content
+									completionChars += len(td)
 									writeSSEReasoningChunk(w, flusher, responseID, created, model, td)
 								}
 							}
@@ -153,6 +159,7 @@ func streamCursorAgent(w http.ResponseWriter, session *agentSession, model strin
 								fb = cursorpkg.VisibleComposerContentFromThinking(thinkingAcc)
 							}
 							if fb != "" {
+								completionChars += len(fb)
 								writeSSEChunk(w, flusher, responseID, created, model, fb, nil, "")
 							}
 						}
@@ -210,6 +217,7 @@ func streamCursorAgent(w http.ResponseWriter, session *agentSession, model strin
 						// One server turn may request several tools, so each call is
 						// emitted with its own index and the turn stays open until
 						// the server ends it; finish_reason is decided there.
+						completionChars += len(argsJSON)
 						writeSSEToolCall(w, flusher, responseID, created, model, tcID, name, string(argsJSON), toolIndex)
 						toolIndex++
 					default:
@@ -237,9 +245,26 @@ func streamCursorAgent(w http.ResponseWriter, session *agentSession, model strin
 		}
 	}
 
+	if streamErr != "" && !emittedText && thinkingAcc == "" && toolIndex == 0 {
+		// Nothing was written yet, so this can still be reported as a failed
+		// attempt instead of a truncated SSE stream the caller would log as a
+		// success. The only streaming failure left here is a framing one (an
+		// oversized frame), hence 502.
+		return &proxy.UpstreamError{StatusCode: http.StatusBadGateway, Body: cursorErrorBody(streamErr, "api_error")}
+	}
 	if streamErr != "" {
 		writeSSEError(w, flusher, streamErr)
 		return nil
+	}
+
+	if !finished && !emittedText && thinkingAcc == "" && toolIndex == 0 {
+		// The connection ended before the turn did and produced nothing: reporting
+		// a finish_reason stop here would present a dead stream as a complete empty
+		// answer and log the attempt as a success.
+		return &proxy.UpstreamError{
+			StatusCode: http.StatusBadGateway,
+			Body:       cursorErrorBody("Cursor AgentService stream closed before the turn ended", "api_error"),
+		}
 	}
 
 	if !finished {
@@ -249,6 +274,7 @@ func streamCursorAgent(w http.ResponseWriter, session *agentSession, model strin
 				fb = cursorpkg.VisibleComposerContentFromThinking(thinkingAcc)
 			}
 			if fb != "" {
+				completionChars += len(fb)
 				writeSSEChunk(w, flusher, responseID, created, model, fb, nil, "")
 			}
 		}
@@ -280,6 +306,7 @@ func respondCursorAgent(w http.ResponseWriter, session *agentSession, model stri
 	var pending []byte
 	finished := false
 	agentErr := ""
+	framingErr := false
 
 	for !finished && agentErr == "" {
 		chunk, readErr := session.ReadChunk()
@@ -372,6 +399,7 @@ func respondCursorAgent(w http.ResponseWriter, session *agentSession, model stri
 			})
 			if !ok {
 				agentErr = "Cursor AgentService frame exceeded the accepted size"
+				framingErr = true
 			}
 		}
 		if readErr != nil {
@@ -380,9 +408,16 @@ func respondCursorAgent(w http.ResponseWriter, session *agentSession, model stri
 	}
 
 	if agentErr != "" {
+		status := http.StatusBadRequest
+		if framingErr {
+			status = http.StatusBadGateway
+		}
+		return &proxy.UpstreamError{StatusCode: status, Body: cursorErrorBody(agentErr, "api_error")}
+	}
+	if !finished && content == "" && thinking == "" && len(toolCalls) == 0 {
 		return &proxy.UpstreamError{
-			StatusCode: http.StatusBadRequest,
-			Body:       cursorErrorBody(agentErr, "api_error"),
+			StatusCode: http.StatusBadGateway,
+			Body:       cursorErrorBody("Cursor AgentService stream closed before the turn ended", "api_error"),
 		}
 	}
 
@@ -426,6 +461,10 @@ func respondCursorAgent(w http.ResponseWriter, session *agentSession, model stri
 		},
 	}
 
+	recordCursorUsage(req, len(finalContent)+len(reasoningContent))
 	w.Header().Set("Content-Type", "application/json")
-	return json.NewEncoder(w).Encode(respPayload)
+	if err := json.NewEncoder(w).Encode(respPayload); err != nil {
+		return &errCursorCommitted{err: err}
+	}
+	return nil
 }

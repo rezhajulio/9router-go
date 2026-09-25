@@ -352,6 +352,19 @@ func executeCursorAgent(w http.ResponseWriter, req *Request, bodyMap map[string]
 								if flusher != nil {
 									flusher.Flush()
 								}
+							} else {
+								rej := cursorpkg.RejectExecRequest(execReq)
+								if rej != nil {
+									_ = session.Write(rej)
+								} else {
+									finished = true
+									writeSSEChunk(w, flusher, responseID, created, model, "", nil, "stop")
+									_, _ = fmt.Fprint(w, "data: {\"error\":{\"message\":\"Cursor AgentService requested an unsupported IDE tool\",\"type\":\"api_error\"}}\n\n")
+									_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+									if flusher != nil {
+										flusher.Flush()
+									}
+								}
 							}
 						} else {
 							rej := cursorpkg.RejectExecRequest(execReq)
@@ -475,6 +488,16 @@ func executeCursorAgent(w http.ResponseWriter, req *Request, bodyMap map[string]
 							})
 							finishReason = "tool_calls"
 							finished = true
+						} else {
+							rej := cursorpkg.RejectExecRequest(execReq)
+							if rej != nil {
+								_ = session.Write(rej)
+							} else {
+								agentErr := "Cursor AgentService requested an unsupported IDE tool"
+								http.Error(w, fmt.Sprintf(`{"error":{"message":%q,"type":"api_error"}}`, agentErr), http.StatusBadRequest)
+								finished = true
+								return
+							}
 						}
 					} else {
 						rej := cursorpkg.RejectExecRequest(execReq)

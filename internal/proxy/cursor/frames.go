@@ -116,7 +116,7 @@ func CreateRequestContextResponse(execRequest DecodedMessage) []byte {
 
 // RejectExecRequest rejects unknown IDE builtins so the agent continues with text or MCP tools.
 var execResultFields = map[int]int{
-	2: 2, 3: 3, 4: 4, 5: 5, 7: 7, 8: 8, 9: 9, 16: 16, 20: 20, 23: 23,
+	2: 2, 3: 3, 4: 4, 5: 5, 7: 7, 8: 8, 9: 9, 16: 16, 20: 20, 23: 23, 36: 36,
 }
 
 func RejectExecRequest(execRequest DecodedMessage) []byte {
@@ -131,7 +131,10 @@ func RejectExecRequest(execRequest DecodedMessage) []byte {
 
 	variant := 0
 	for _, k := range execRequest.Keys() {
-		if k != 1 && k != 15 {
+		// Field 1 is the message ID (varint).
+		// Field 15 is execId (string).
+		// Field 19 and 55 are trace/context metadata (RequestTracingData / flags).
+		if k != 1 && k != 15 && k != 19 && k != 55 {
 			variant = k
 			break
 		}
@@ -139,7 +142,13 @@ func RejectExecRequest(execRequest DecodedMessage) []byte {
 
 	resultField, ok := execResultFields[variant]
 	if !ok {
-		return nil
+		// If variant is not explicitly mapped, use variant itself as resultField
+		// (ExecClientMessage result payload uses same field number as ExecServerMessage variant)
+		if variant > 1 {
+			resultField = variant
+		} else {
+			return nil
+		}
 	}
 
 	if variant == 9 {

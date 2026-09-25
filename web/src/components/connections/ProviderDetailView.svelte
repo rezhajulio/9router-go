@@ -25,6 +25,7 @@
   } from '../../lib/oauth-handoff'
   import { getModelsByProviderId, PROVIDER_ID_TO_ALIAS } from '../../lib/models'
   import { notifyCustomModelsChanged } from '../../lib/customModels'
+  import { notifications } from '../../lib/notifications'
   import {
     buildAvailableModels,
     fetchProviderModelsData,
@@ -2137,24 +2138,35 @@
       const res = await api.getConnectionModels(active.id)
       const models = res.models || []
       if (models.length === 0) {
-        alert('No models returned from /models.')
+        notifications.warning('No models returned from /models.')
         return
       }
       let imported = 0
+      const savePromises: Promise<any>[] = []
       for (const m of models) {
         const modelId = typeof m === 'string' ? m : (m.id || m.name || m.model || '')
         if (!modelId || compatibleRows.some((r) => r.id === modelId)) continue
-        await api.saveCustomModel(`${storageAlias}|${modelId}|llm`, {
-          id: modelId,
-          providerAlias: storageAlias,
-          type: 'llm',
-        })
+        savePromises.push(
+          api.saveCustomModel(`${storageAlias}|${modelId}|llm`, {
+            id: modelId,
+            providerAlias: storageAlias,
+            type: 'llm',
+          })
+        )
         imported += 1
       }
+      if (savePromises.length > 0) {
+        await Promise.all(savePromises)
+      }
       await refreshCompatibleModels()
-      if (imported > 0) notifyCustomModelsChanged()
+      if (imported > 0) {
+        notifyCustomModelsChanged()
+        notifications.success(`Successfully imported ${imported} model(s).`)
+      } else {
+        notifications.info('All models already exist, no new models added.')
+      }
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to import models')
+      notifications.error(err instanceof Error ? err.message : 'Failed to import models')
     } finally {
       isImportingCompatibleModels = false
     }
@@ -2164,7 +2176,7 @@
     if (isImportingLiveCatalogModels) return
     const active = providerConnections.find((c) => c.isActive !== 0)
     if (!active) {
-      alert('Add an active connection first to fetch models.')
+      notifications.warning('Add an active connection first to fetch models.')
       return
     }
     isImportingLiveCatalogModels = true
@@ -2172,10 +2184,11 @@
       const res = await api.getConnectionModels(active.id)
       const models = res.models || []
       if (models.length === 0) {
-        alert('No models returned from /models.')
+        notifications.warning('No models returned from /models.')
         return
       }
       let imported = 0
+      const savePromises: Promise<any>[] = []
       for (const m of models) {
         const modelId = typeof m === 'string' ? m : (m.id || m.name || m.model || '')
         if (!modelId) continue
@@ -2190,19 +2203,29 @@
           typeof m.capabilities === 'object'
             ? (m.capabilities as { vision?: boolean; reasoning?: boolean })
             : undefined
-        await api.saveCustomModel(`${storageAlias}|${modelId}|llm`, {
-          id: modelId,
-          providerAlias: storageAlias,
-          type: 'llm',
-          ...(caps ? { caps } : {}),
-        })
+        savePromises.push(
+          api.saveCustomModel(`${storageAlias}|${modelId}|llm`, {
+            id: modelId,
+            providerAlias: storageAlias,
+            type: 'llm',
+            ...(caps ? { caps } : {}),
+          })
+        )
         imported++
+      }
+      if (savePromises.length > 0) {
+        await Promise.all(savePromises)
       }
       const modelsData = await fetchProviderModelsData(providerId, storageAlias)
       customModels = modelsData.customModels
-      if (imported > 0) notifyCustomModelsChanged()
+      if (imported > 0) {
+        notifyCustomModelsChanged()
+        notifications.success(`Successfully imported ${imported} model(s).`)
+      } else {
+        notifications.info('All models already exist, no new models added.')
+      }
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to import models')
+      notifications.error(err instanceof Error ? err.message : 'Failed to import models')
     } finally {
       isImportingLiveCatalogModels = false
     }

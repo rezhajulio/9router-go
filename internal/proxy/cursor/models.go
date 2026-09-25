@@ -32,6 +32,11 @@ const (
 
 	modelsCacheTTL   = 5 * time.Minute
 	negativeCacheTTL = 30 * time.Second
+
+	// maxCatalogCacheEntries bounds the catalog cache: one entry is kept per
+	// (token, machineID) pair, so a proxy rotating through many Cursor
+	// credentials would otherwise grow it forever.
+	maxCatalogCacheEntries = 128
 )
 
 // FetchCursorProtoFunc allows mocking H2 proto fetch in tests.
@@ -83,9 +88,30 @@ func readCatalogCache(key string, now time.Time) ([]ModelEntry, bool) {
 }
 
 func writeCatalogCache(key string, ttl time.Duration, models []ModelEntry) {
+	now := time.Now()
 	catalogCacheMu.Lock()
 	defer catalogCacheMu.Unlock()
-	catalogCache[key] = cachedCatalog{expiresAt: time.Now().Add(ttl), models: models}
+	if _, exists := catalogCache[key]; !exists && len(catalogCache) >= maxCatalogCacheEntries {
+		evictCatalogCacheLocked(now)
+	}
+	catalogCache[key] = cachedCatalog{expiresAt: now.Add(ttl), models: models}
+}
+
+// evictCatalogCacheLocked drops expired entries and then arbitrary ones until
+// the cache is under its cap (the same "hot or dead, never warm" reasoning as
+// the rotating-proxy client cache). Caller holds catalogCacheMu.
+func evictCatalogCacheLocked(now time.Time) {
+	for k, cached := range catalogCache {
+		if !cached.expiresAt.After(now) {
+			delete(catalogCache, k)
+		}
+	}
+	for k := range catalogCache {
+		if len(catalogCache) < maxCatalogCacheEntries {
+			return
+		}
+		delete(catalogCache, k)
+	}
 }
 
 // ParseCursorUsableModels decodes agent.v1.GetUsableModelsResponse protobuf payload.
@@ -156,7 +182,14 @@ func ResolveCursorModels(ctx context.Context, accessToken, machineID string, gho
 	// The fetch itself runs on a context that outlives the triggering caller
 	// (singleflight has no cancellation propagation) and carries no other
 	// request's cancellation; it is bounded by cursorModelsFetchTimeout.
-	result := modelsFlight.DoChan(key, func() (any, error) {
+	// A forced refresh must not join an in-flight non-forced fetch, or the caller
+	// asking for fresh models would get a possibly stale result, so the flag is
+	// part of the flight key (the cache key stays the same).
+	flightKey := key
+	if forceRefresh {
+		flightKey += ":refresh"
+	}
+	result := modelsFlight.DoChan(flightKey, func() (any, error) {
 		fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cursorModelsFetchTimeout)
 		defer cancel()
 		return fetchCursorModels(fetchCtx, key, accessToken, machineID, ghostMode)

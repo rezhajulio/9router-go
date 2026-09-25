@@ -398,6 +398,13 @@ func GenerateLegacyCursorBody(messages []any, modelName string, tools []any, rea
 		// ClientSideToolV2Result/ClientSideToolV2Call pair for the call it
 		// answers. The textual content is kept as well, so the model still sees
 		// the result if the tool result fields are ignored.
+		//
+		// Deliberate divergence from upstream: this leaves the result on the
+		// USER-role message that carries the tool result, whereas upstream's
+		// encodeRequest() maps every non-"user" role to ASSISTANT and attaches
+		// tool_results to the assistant bubble that made the call. If Cursor ever
+		// validates result ownership against assistant bubbles, the carrier role
+		// here is the first thing to change.
 		if roleStr == "tool" {
 			callID, _ := mMap["tool_call_id"].(string)
 			meta := callMeta[callID]

@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"compress/zlib"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"strings"
 )
@@ -17,6 +18,24 @@ const (
 	CompressFlagTrailer     = 0x02
 	CompressFlagGzipTrailer = 0x03
 )
+
+// maxDecompressedFrameLength caps decompressed output: the compressed frame is
+// already size-checked, but deflate ratios are unbounded, so a small hostile
+// payload could otherwise expand until the proxy runs out of memory.
+const maxDecompressedFrameLength = 64 << 20
+
+// readBoundedFrame reads a decompressed frame up to maxDecompressedFrameLength.
+// Exceeding the cap is an error rather than a silent truncation.
+func readBoundedFrame(r io.Reader) ([]byte, error) {
+	out, err := io.ReadAll(io.LimitReader(r, maxDecompressedFrameLength+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(out) > maxDecompressedFrameLength {
+		return nil, fmt.Errorf("decompressed frame exceeds %d bytes", maxDecompressedFrameLength)
+	}
+	return out, nil
+}
 
 // DecompressPayload decompresses payload based on Connect-RPC compression flags.
 func DecompressPayload(payload []byte, flags byte) ([]byte, error) {
@@ -30,7 +49,7 @@ func DecompressPayload(payload []byte, flags byte) ([]byte, error) {
 		// 1. Try gzip decompression
 		gz, err := gzip.NewReader(bytes.NewReader(payload))
 		if err == nil {
-			decompressed, readErr := io.ReadAll(gz)
+			decompressed, readErr := readBoundedFrame(gz)
 			_ = gz.Close()
 			if readErr == nil {
 				return decompressed, nil
@@ -40,7 +59,7 @@ func DecompressPayload(payload []byte, flags byte) ([]byte, error) {
 		// 2. Try standard zlib decompression (RFC 1950 header)
 		zr, err := zlib.NewReader(bytes.NewReader(payload))
 		if err == nil {
-			decompressed, readErr := io.ReadAll(zr)
+			decompressed, readErr := readBoundedFrame(zr)
 			_ = zr.Close()
 			if readErr == nil {
 				return decompressed, nil
@@ -49,7 +68,7 @@ func DecompressPayload(payload []byte, flags byte) ([]byte, error) {
 
 		// 3. Fall back to raw deflate (RFC 1951 without wrapper headers)
 		fl := flate.NewReader(bytes.NewReader(payload))
-		decompressed, err := io.ReadAll(fl)
+		decompressed, err := readBoundedFrame(fl)
 		_ = fl.Close()
 		if err == nil {
 			return decompressed, nil
@@ -150,14 +169,19 @@ func RejectExecRequest(execRequest DecodedMessage) []byte {
 	return WrapExecClientMessage(id, execID, resultField, rejected)
 }
 
-// execVariantFields are the ExecServerMessage oneof field numbers this port
-// knows how to answer with a rejected/empty result (agent.v1 ExecServerMessage).
-// Cursor CLI builds also emit newer variants outside this set (27-31, 37-38,
-// 40-55); those are answered with an ExecClientThrow instead, which is how omp
-// answers any variant it has no handler for.
+// execVariantFields are the ExecServerMessage oneof field numbers whose result
+// message accepts the generic rejected payload built by RejectExecRequest (a
+// refusal string under field 2, or the empty success for 9).
+//
+// Every other variant — including 3/4/7/8/16/20 (Write/Delete/Read/Ls/
+// BackgroundShellSpawn/Fetch), whose result messages put the refusal under 3 or
+// 6 or expect a typed message, and the newer CLI variants (27-31, 37-38, 40-55)
+// — is answered with ExecClientControlFrames instead. Writing the generic blob
+// there would decode as the variant's *error* or *success* field and hand the
+// model a corrupted tool result, so a throw is both safer and what omp does for
+// variants it has no typed handler for.
 var execVariantFields = map[int]bool{
-	2: true, 3: true, 4: true, 5: true, 7: true, 8: true, 9: true,
-	16: true, 20: true, 23: true, 36: true,
+	2: true, 5: true, 9: true, 23: true, 36: true,
 }
 
 // ExecClientControlFrames builds the two client frames that decline to execute
@@ -197,12 +221,18 @@ func execRequestID(execRequest DecodedMessage) uint64 {
 // ExecRequestVariant returns the oneof field number identifying the requested
 // IDE tool. Field 1 is the message id, 15 is exec_id, and 19/55 carry
 // trace/context metadata (RequestTracingData / flags) that arrive alongside the
-// variant, so none of them identify the tool.
+// variant, so none of them identify the tool. Every ExecServerMessage variant is
+// a message, so a length-delimited field is required; anything else (a malformed
+// or hostile frame) yields 0 and lands in the throw path.
 func ExecRequestVariant(execRequest DecodedMessage) int {
 	for _, k := range execRequest.Keys() {
-		if k != 1 && k != 15 && k != 19 && k != 55 {
-			return k
+		if k == 1 || k == 15 || k == 19 || k == 55 {
+			continue
 		}
+		if execRequest.Get(k)[0].WireType != WireBytes {
+			continue
+		}
+		return k
 	}
 	return 0
 }

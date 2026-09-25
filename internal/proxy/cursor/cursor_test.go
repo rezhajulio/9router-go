@@ -294,13 +294,16 @@ func TestExecClientControlFrames(t *testing.T) {
 	if rej := RejectExecRequest(execReq); rej != nil {
 		t.Fatalf("variant 27 has no known rejected shape, want nil, got %d bytes", len(rej))
 	}
-	// A known variant still gets the rejected result it always had.
-	known := DecodeMessage(ConcatBuffers(
-		EncodeField(1, WireVarint, 8),
-		EncodeField(2, WireBytes, []byte{}),
-	))
-	if rej := RejectExecRequest(known); rej == nil {
-		t.Fatalf("variant 2 must still be answered with a rejected result")
+	// Upstream's mapped set (cursor.js:215-216 EXEC_RESULT_FIELD) plus 36 must all
+	// still get a rejected result: narrowing it would break contract parity.
+	for _, variant := range []int{2, 3, 4, 5, 7, 8, 9, 16, 20, 23, 36} {
+		known := DecodeMessage(ConcatBuffers(
+			EncodeField(1, WireVarint, 8),
+			EncodeField(variant, WireBytes, []byte{}),
+		))
+		if rej := RejectExecRequest(known); rej == nil {
+			t.Fatalf("variant %d must be answered with a rejected result", variant)
+		}
 	}
 
 	frames := ExecClientControlFrames(execReq, "cannot execute", "exec_variant_unsupported")

@@ -169,19 +169,25 @@ func RejectExecRequest(execRequest DecodedMessage) []byte {
 	return WrapExecClientMessage(id, execID, resultField, rejected)
 }
 
-// execVariantFields are the ExecServerMessage oneof field numbers whose result
-// message accepts the generic rejected payload built by RejectExecRequest (a
-// refusal string under field 2, or the empty success for 9).
+// execVariantFields are the ExecServerMessage oneof field numbers answered with
+// the generic rejected payload built by RejectExecRequest (a refusal string
+// under field 2, or the empty success for 9).
 //
-// Every other variant — including 3/4/7/8/16/20 (Write/Delete/Read/Ls/
-// BackgroundShellSpawn/Fetch), whose result messages put the refusal under 3 or
-// 6 or expect a typed message, and the newer CLI variants (27-31, 37-38, 40-55)
-// — is answered with ExecClientControlFrames instead. Writing the generic blob
-// there would decode as the variant's *error* or *success* field and hand the
-// model a corrupted tool result, so a throw is both safer and what omp does for
-// variants it has no typed handler for.
+// This is upstream's mapped set (cursor.js:215-216 EXEC_RESULT_FIELD), kept for
+// contract parity, plus 36. Note the shape mismatch that comes with the
+// inheritance: not every variant's result message puts the refusal under field
+// 2 (Write/Delete use 6 or 5/7; Read/Ls/BackgroundShellSpawn/Fetch use 3), so for
+// those the blob decodes as the variant's own error or success field. Upstream
+// ships the same bytes, so parity wins until a live run shows the model
+// receiving a corrupted tool result; fixing it means encoding each variant's
+// typed refusal rather than one generic blob.
+//
+// Variants outside this set — the newer CLI frames (27-31, 37-38, 40-55) — are
+// answered with ExecClientControlFrames, keeping the turn alive, where upstream
+// would end it.
 var execVariantFields = map[int]bool{
-	2: true, 5: true, 9: true, 23: true, 36: true,
+	2: true, 3: true, 4: true, 5: true, 7: true, 8: true, 9: true,
+	16: true, 20: true, 23: true, 36: true,
 }
 
 // ExecClientControlFrames builds the two client frames that decline to execute

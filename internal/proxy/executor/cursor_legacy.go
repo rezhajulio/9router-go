@@ -96,13 +96,13 @@ func executeCursorLegacy(w http.ResponseWriter, req *Request, bodyMap map[string
 	w = newCursorRecorderWriter(w, req)
 
 	if isStream {
-		return streamCursorLegacy(w, resp.Body, model, composerModel, responseID, created)
+		return streamCursorLegacy(w, req, resp.Body, model, composerModel, responseID, created)
 	}
 	return respondCursorLegacy(w, resp.Body, model, composerModel, responseID, created, req)
 }
 
 // streamCursorLegacy translates Codebar ChatService frames into OpenAI SSE chunks.
-func streamCursorLegacy(w http.ResponseWriter, body io.Reader, model string, composerModel bool, responseID string, created int64) error {
+func streamCursorLegacy(w http.ResponseWriter, req *Request, body io.Reader, model string, composerModel bool, responseID string, created int64) error {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -113,6 +113,10 @@ func streamCursorLegacy(w http.ResponseWriter, body io.Reader, model string, com
 	emittedVisible := 0
 	emitted := false
 	streamErr := ""
+	framingErr := false
+	completionChars := 0
+	// Published on every exit path, error frames included.
+	defer func() { recordCursorUsage(req, completionChars) }()
 
 	// Tool calls are indexed by id: a repeated id streams further arguments for
 	// the same OpenAI tool_call instead of claiming a new index (upstream
@@ -140,10 +144,12 @@ func streamCursorLegacy(w http.ResponseWriter, body io.Reader, model string, com
 						toolIndexes[tc.ID] = index
 						toolCalls++
 					}
+					completionChars += len(tc.Arguments)
 					writeSSEToolCall(w, flusher, responseID, created, model, tc.ID, tc.Name, tc.Arguments, index)
 					emitted = true
 				}
 				if parsed.Text != "" {
+					completionChars += len(parsed.Text)
 					writeSSEChunk(w, flusher, responseID, created, model, parsed.Text, nil, "")
 					emitted = true
 				}
@@ -153,6 +159,7 @@ func streamCursorLegacy(w http.ResponseWriter, body io.Reader, model string, com
 					if len(vis) > emittedVisible {
 						delta := vis[emittedVisible:]
 						emittedVisible = len(vis)
+						completionChars += len(delta)
 						writeSSEChunk(w, flusher, responseID, created, model, delta, nil, "")
 						emitted = true
 					}
@@ -160,6 +167,7 @@ func streamCursorLegacy(w http.ResponseWriter, body io.Reader, model string, com
 			})
 			if !ok {
 				streamErr = "Cursor ChatService frame exceeded the accepted size"
+				framingErr = true
 			}
 		}
 		if rErr != nil || streamErr != "" {
@@ -170,7 +178,15 @@ func streamCursorLegacy(w http.ResponseWriter, body io.Reader, model string, com
 	if streamErr != "" {
 		if !emitted {
 			// Nothing was written yet, so report an HTTP error instead of a
-			// truncated 200 stream. Cursor reports rate limits on error frames.
+			// truncated 200 stream. A framing failure is our own protocol handling
+			// (502); everything else here is an upstream error frame, which Cursor
+			// uses for rate limits.
+			if framingErr {
+				return &proxy.UpstreamError{
+					StatusCode: http.StatusBadGateway,
+					Body:       cursorErrorBody(streamErr, "api_error"),
+				}
+			}
 			return &proxy.UpstreamError{
 				StatusCode: http.StatusTooManyRequests,
 				Body:       cursorErrorBody(streamErr, "rate_limit_error"),
@@ -198,6 +214,7 @@ func respondCursorLegacy(w http.ResponseWriter, body io.Reader, model string, co
 
 	var pending []byte
 	streamErr := ""
+	framingErr := false
 	buf := make([]byte, 4096)
 	for {
 		n, rErr := body.Read(buf)
@@ -242,6 +259,7 @@ func respondCursorLegacy(w http.ResponseWriter, body io.Reader, model string, co
 			})
 			if !ok {
 				streamErr = "Cursor ChatService frame exceeded the accepted size"
+				framingErr = true
 			}
 		}
 		if rErr != nil || streamErr != "" {
@@ -250,6 +268,12 @@ func respondCursorLegacy(w http.ResponseWriter, body io.Reader, model string, co
 	}
 
 	if streamErr != "" && totalContent == "" && len(toolCalls) == 0 {
+		if framingErr {
+			return &proxy.UpstreamError{
+				StatusCode: http.StatusBadGateway,
+				Body:       cursorErrorBody(streamErr, "api_error"),
+			}
+		}
 		return &proxy.UpstreamError{
 			StatusCode: http.StatusTooManyRequests,
 			Body:       cursorErrorBody(streamErr, "rate_limit_error"),
@@ -287,6 +311,10 @@ func respondCursorLegacy(w http.ResponseWriter, body io.Reader, model string, co
 		},
 	}
 
+	recordCursorUsage(req, len(totalContent)+len(totalThinking))
 	w.Header().Set("Content-Type", "application/json")
-	return json.NewEncoder(w).Encode(respPayload)
+	if err := json.NewEncoder(w).Encode(respPayload); err != nil {
+		return &errCursorCommitted{err: err}
+	}
+	return nil
 }

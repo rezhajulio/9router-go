@@ -838,6 +838,10 @@ func (h *ChatHandler) HandleTestModel(w http.ResponseWriter, r *http.Request) {
 
 	testReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(b))
 	testReq.Header.Set("Content-Type", "application/json")
+	// Executors read the client User-Agent from the request context (e.g. Cursor
+	// forces agent mode for Claude Code), so the synthetic test request must
+	// carry it or the test exercises a different path than live traffic.
+	testReq.Header.Set("User-Agent", r.Header.Get("User-Agent"))
 	auth := r.Header.Get("Authorization")
 	if auth == "" {
 		if keys, err := h.Repo.GetApiKeys(); err == nil {

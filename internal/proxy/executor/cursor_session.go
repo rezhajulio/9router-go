@@ -25,6 +25,17 @@ const cursorDialTimeout = 15 * time.Second
 // giving up on an AgentService that accepted the connection and went silent.
 const cursorHeaderTimeout = 60 * time.Second
 
+// cursorReadIdleTimeout and cursorPingTimeout give the agent stream a liveness
+// check instead of an overall deadline: after this much read silence the
+// transport sends an HTTP/2 PING, and tears the connection down when the peer
+// fails to ACK within the ping timeout. Reading the stream is deliberately
+// unbounded, so without this a black-holed connection (NAT idle timeout, dropped
+// FIN, hung server) would block the read loop forever.
+const (
+	cursorReadIdleTimeout = 30 * time.Second
+	cursorPingTimeout     = 15 * time.Second
+)
+
 // AgentService is HTTP/2-only. These are variables so tests can point the
 // executors at an httptest server instead of the live Cursor API.
 var (
@@ -47,12 +58,20 @@ type agentSession struct {
 }
 
 func (s *agentSession) Write(frame []byte) error {
+	// Pipe writes block until the transport consumes the bytes, so the mutex is
+	// only held long enough to read the state: Close (including the one
+	// context.AfterFunc runs when the client disconnects) takes the same mutex to
+	// tear the session down, and holding it across a blocked write would park
+	// both goroutines forever, with no deadline left to break the cycle.
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed || s.pw == nil {
+		s.mu.Unlock()
 		return fmt.Errorf("session closed")
 	}
-	_, err := s.pw.Write(frame)
+	pw := s.pw
+	s.mu.Unlock()
+
+	_, err := pw.Write(frame)
 	return err
 }
 
@@ -123,7 +142,11 @@ func openAgentHttp2Stream(ctx context.Context, endpointURL string, headers map[s
 		return nil, fmt.Errorf("failed to dial cursor h2 endpoint: %w", err)
 	}
 
-	clientConn, err := (&http2.Transport{}).NewClientConn(rawConn)
+	transport := &http2.Transport{
+		ReadIdleTimeout: cursorReadIdleTimeout,
+		PingTimeout:     cursorPingTimeout,
+	}
+	clientConn, err := transport.NewClientConn(rawConn)
 	if err != nil {
 		_ = rawConn.Close()
 		return nil, fmt.Errorf("failed to initialize h2 client conn: %w", err)
@@ -204,7 +227,17 @@ func roundTripWithHeaderTimeout(ctx context.Context, clientConn *http2.ClientCon
 func dialCursorH2(ctx context.Context, client *http.Client, host, port string, tlsConfig *tls.Config) (net.Conn, error) {
 	addr := net.JoinHostPort(host, port)
 	if proxyURL := clientProxyFor(client, "https://"+addr); proxyURL != nil {
-		return dialCursorH2ViaProxy(ctx, proxyURL, addr, tlsConfig)
+		switch proxyURL.Scheme {
+		case "http", "https":
+			return dialCursorH2ViaProxy(ctx, proxyURL, addr, tlsConfig)
+		default:
+			// Only HTTP CONNECT is implemented here; a SOCKS5 proxy (reachable via
+			// ALL_PROXY) cannot be spoken to with a CONNECT line. Failing instead of
+			// dialing direct keeps traffic from leaking past the proxy, and the
+			// caller falls back to the legacy path, which goes through net/http and
+			// supports SOCKS5 natively.
+			return nil, fmt.Errorf("cursor agent: unsupported proxy scheme %q", proxyURL.Scheme)
+		}
 	}
 
 	conn, err := (&net.Dialer{Timeout: cursorDialTimeout}).DialContext(ctx, "tcp", addr)
@@ -236,6 +269,19 @@ func dialCursorH2ViaProxy(ctx context.Context, proxyURL *url.URL, addr string, t
 		return nil, fmt.Errorf("proxy dial %s: %w", proxyAddr, err)
 	}
 
+	// The caller's context carries no deadline for a streaming turn, so the CONNECT
+	// exchange and the inner TLS handshake need their own bound: a proxy that
+	// accepts the TCP connection and then goes silent would otherwise hang before
+	// the response-header timeout can even start.
+	deadline := time.Now().Add(cursorDialTimeout)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+	if err := rawConn.SetDeadline(deadline); err != nil {
+		_ = rawConn.Close()
+		return nil, fmt.Errorf("set tunnel deadline: %w", err)
+	}
+
 	conn := net.Conn(rawConn)
 	if proxyURL.Scheme == "https" {
 		proxyTLS := tls.Client(rawConn, &tls.Config{ServerName: proxyURL.Hostname()})
@@ -256,6 +302,11 @@ func dialCursorH2ViaProxy(ctx context.Context, proxyURL *url.URL, addr string, t
 	if err := tlsConn.HandshakeContext(ctx); err != nil {
 		_ = tunnelled.Close()
 		return nil, fmt.Errorf("tls handshake through proxy: %w", err)
+	}
+	// The tunnel is up: the deadline covered establishing it, not the stream.
+	if err := tlsConn.SetDeadline(time.Time{}); err != nil {
+		_ = tunnelled.Close()
+		return nil, fmt.Errorf("clear tunnel deadline: %w", err)
 	}
 	return tlsConn, nil
 }

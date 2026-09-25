@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"9router/proxy/internal/proxy"
+	"9router/proxy/internal/translator"
 
 	cursorpkg "9router/proxy/internal/proxy/cursor"
 )
@@ -323,4 +325,44 @@ func pointCursorLegacyAt(baseURL string) func() {
 	previous := cursorChatBaseURL
 	cursorChatBaseURL = baseURL
 	return func() { cursorChatBaseURL = previous }
+}
+
+// The turn must publish its own completion size. Without it, usage logging
+// estimates tokens from the raw SSE/JSON bytes mirrored into ResponseBuf, which
+// counts chunk ids and JSON framing and inflates the number several-fold.
+func TestCursorLegacyPublishesUsage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		respMsg := cursorpkg.EncodeField(2, cursorpkg.WireBytes,
+			cursorpkg.EncodeField(1, cursorpkg.WireBytes, "Hello world"))
+		_, _ = w.Write(cursorpkg.WrapConnectRPCFrame(respMsg))
+	}))
+	defer server.Close()
+
+	restore := pointCursorLegacyAt(server.URL)
+	defer restore()
+
+	for _, stream := range []bool{false, true} {
+		t.Run(map[bool]string{false: "non-stream", true: "stream"}[stream], func(t *testing.T) {
+			body := map[string]any{
+				"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+				"stream":   stream,
+			}
+			b, _ := json.Marshal(body)
+			ctx := translator.WithUsageCapture(context.Background())
+			req := &Request{ModelName: "gpt-5.2", Body: b, APIKey: "test-token", IsStream: stream, Ctx: ctx}
+
+			if err := executeCursorLegacy(httptest.NewRecorder(), req, body, "test-token", "test-machine", true); err != nil {
+				t.Fatalf("executeCursorLegacy failed: %v", err)
+			}
+
+			usage := translator.GetAndClearUsage(ctx)
+			if usage == nil {
+				t.Fatalf("no usage published on the request context")
+			}
+			// "Hello world" is 11 chars -> 2 estimated tokens.
+			if usage.CompletionTokens != 2 {
+				t.Fatalf("CompletionTokens = %d, want 2", usage.CompletionTokens)
+			}
+		})
+	}
 }

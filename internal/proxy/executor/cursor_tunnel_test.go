@@ -151,3 +151,25 @@ func TestDialCursorH2Direct(t *testing.T) {
 		t.Fatalf("expected body direct, got %q", string(body))
 	}
 }
+
+// A SOCKS5 proxy (e.g. from ALL_PROXY) cannot be spoken to with an HTTP CONNECT
+// line. Failing keeps the request from leaking past the proxy, and the caller
+// falls back to the legacy path, which goes through net/http and supports SOCKS5.
+func TestDialCursorH2RejectsNonHTTPProxyScheme(t *testing.T) {
+	proxyURL, err := url.Parse("socks5://127.0.0.1:1080")
+	if err != nil {
+		t.Fatalf("parse proxy url: %v", err)
+	}
+	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)}}
+
+	_, err = dialCursorH2(context.Background(), client, "agent.api5.cursor.sh", "443", &tls.Config{
+		ServerName: "agent.api5.cursor.sh",
+		NextProtos: []string{"h2"},
+	})
+	if err == nil {
+		t.Fatalf("expected an error for a socks5 proxy")
+	}
+	if !strings.Contains(err.Error(), "unsupported proxy scheme") {
+		t.Fatalf("expected an unsupported scheme error, got %v", err)
+	}
+}

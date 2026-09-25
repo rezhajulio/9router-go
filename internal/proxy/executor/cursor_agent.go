@@ -169,6 +169,10 @@ func streamCursorAgent(w http.ResponseWriter, req *Request, session *agentSessio
 						if flusher != nil {
 							flusher.Flush()
 						}
+						// The turn is over and its terminal chunk is out: nothing else
+						// in this payload may be handled, or a tool call from the same
+						// frame would be written after [DONE].
+						return
 					}
 				}
 
@@ -245,6 +249,13 @@ func streamCursorAgent(w http.ResponseWriter, req *Request, session *agentSessio
 		}
 	}
 
+	// finished means the turn_ended terminal (finish chunk + [DONE]) is already on
+	// the wire, so nothing else may be written for this request — not an error
+	// frame, and above all not a second [DONE].
+	if finished {
+		return nil
+	}
+
 	if streamErr != "" && !emittedText && thinkingAcc == "" && toolIndex == 0 {
 		// Nothing was written yet, so this can still be reported as a failed
 		// attempt instead of a truncated SSE stream the caller would log as a
@@ -257,7 +268,7 @@ func streamCursorAgent(w http.ResponseWriter, req *Request, session *agentSessio
 		return nil
 	}
 
-	if !finished && !emittedText && thinkingAcc == "" && toolIndex == 0 {
+	if !emittedText && thinkingAcc == "" && toolIndex == 0 {
 		// The connection ended before the turn did and produced nothing: reporting
 		// a finish_reason stop here would present a dead stream as a complete empty
 		// answer and log the attempt as a success.
@@ -267,22 +278,20 @@ func streamCursorAgent(w http.ResponseWriter, req *Request, session *agentSessio
 		}
 	}
 
-	if !finished {
-		if !emittedText && thinkingAcc != "" {
-			fb := thinkingAcc
-			if composerModel {
-				fb = cursorpkg.VisibleComposerContentFromThinking(thinkingAcc)
-			}
-			if fb != "" {
-				completionChars += len(fb)
-				writeSSEChunk(w, flusher, responseID, created, model, fb, nil, "")
-			}
+	if !emittedText && thinkingAcc != "" {
+		fb := thinkingAcc
+		if composerModel {
+			fb = cursorpkg.VisibleComposerContentFromThinking(thinkingAcc)
 		}
-		writeSSEChunk(w, flusher, responseID, created, model, "", nil, finishReasonFor(toolIndex))
-		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
-		if flusher != nil {
-			flusher.Flush()
+		if fb != "" {
+			completionChars += len(fb)
+			writeSSEChunk(w, flusher, responseID, created, model, fb, nil, "")
 		}
+	}
+	writeSSEChunk(w, flusher, responseID, created, model, "", nil, finishReasonFor(toolIndex))
+	_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	if flusher != nil {
+		flusher.Flush()
 	}
 
 	return nil

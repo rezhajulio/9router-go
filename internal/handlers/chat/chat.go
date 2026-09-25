@@ -57,6 +57,7 @@ func (h *ChatHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Reque
 
 	ctx := handlerutil.WithSessionID(r.Context(), handlerutil.ExtractSessionID(r))
 	ctx = handlerutil.WithClientAnthropicBeta(ctx, r.Header.Get("anthropic-beta"))
+	ctx = handlerutil.WithUserAgent(ctx, r.Header.Get("User-Agent"))
 	requiredCaps := DetectRequiredCapabilities(body)
 
 	if len(modelInfo.ComboModels) > 0 {
@@ -205,6 +206,7 @@ func (h *ChatHandler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 	workingBody["stream"] = reqBody.Stream
 	ctx := handlerutil.WithSessionID(r.Context(), handlerutil.ExtractSessionID(r))
 	ctx = handlerutil.WithClientAnthropicBeta(ctx, r.Header.Get("anthropic-beta"))
+	ctx = handlerutil.WithUserAgent(ctx, r.Header.Get("User-Agent"))
 	// Store requested model for streaming echo (PR #3693) and for [1m] marker handling
 	ctx = translator.WithRequestedModel(ctx, stripModelContextMarker(reqBody.Model))
 

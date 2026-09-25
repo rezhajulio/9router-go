@@ -61,13 +61,23 @@ func DecompressPayload(payload []byte, flags byte) ([]byte, error) {
 	return payload, nil
 }
 
-// DecodeAgentFrames reads Connect-RPC frames from buffer and calls onFrame for each payload.
-// Returns remaining unconsumed bytes.
-func DecodeAgentFrames(buffer []byte, onFrame func(payload []byte)) []byte {
-	pending := buffer
+// maxAgentFrameLength caps a single Connect-RPC frame. Real Cursor frames are a
+// few KiB; the cap only exists so a corrupt or hostile frame header cannot keep
+// DecodeAgentFrames buffering for a frame that will never complete.
+const maxAgentFrameLength = 8 << 20
+
+// DecodeAgentFrames reads Connect-RPC frames from buffer and calls onFrame for
+// each payload. It returns the remaining unconsumed bytes, and ok=false when a
+// frame declared a length above maxAgentFrameLength: the stream cannot be
+// resynchronised past that frame, so callers must stop reading.
+func DecodeAgentFrames(buffer []byte, onFrame func(payload []byte)) (pending []byte, ok bool) {
+	pending = buffer
 	for len(pending) >= 5 {
 		flags := pending[0]
 		length := binary.BigEndian.Uint32(pending[1:5])
+		if length > maxAgentFrameLength {
+			return pending, false
+		}
 		frameLen := 5 + int(length)
 		if len(pending) < frameLen {
 			break
@@ -81,7 +91,7 @@ func DecodeAgentFrames(buffer []byte, onFrame func(payload []byte)) []byte {
 			onFrame(decompressed)
 		}
 	}
-	return pending
+	return pending, true
 }
 
 // WrapExecClientMessage wraps an ExecClientMessage response into Connect-RPC frame.
@@ -114,42 +124,22 @@ func CreateRequestContextResponse(execRequest DecodedMessage) []byte {
 	return WrapExecClientMessage(id, execID, 10, requestContextResult)
 }
 
-// RejectExecRequest rejects unknown IDE builtins so the agent continues with text or MCP tools.
-var execResultFields = map[int]int{
-	2: 2, 3: 3, 4: 4, 5: 5, 7: 7, 8: 8, 9: 9, 16: 16, 20: 20, 23: 23, 36: 36,
-}
-
+// RejectExecRequest rejects IDE builtins this proxy does not execute so the
+// agent continues with text or MCP tools. The result payload carries the same
+// field number as the requested variant. Returns nil when the variant has no
+// known rejected shape, in which case callers answer with ExecClientControlFrames.
 func RejectExecRequest(execRequest DecodedMessage) []byte {
-	var id uint64
-	if execRequest.Has(1) {
-		id = execRequest.Get(1)[0].Varint
-	}
+	id := execRequestID(execRequest)
 	execID := ""
 	if execRequest.Has(15) {
 		execID = string(execRequest.Get(15)[0].Value)
 	}
 
-	variant := 0
-	for _, k := range execRequest.Keys() {
-		// Field 1 is the message ID (varint).
-		// Field 15 is execId (string).
-		// Field 19 and 55 are trace/context metadata (RequestTracingData / flags).
-		if k != 1 && k != 15 && k != 19 && k != 55 {
-			variant = k
-			break
-		}
+	variant := ExecRequestVariant(execRequest)
+	if variant == 0 || !execVariantFields[variant] {
+		return nil
 	}
-
-	resultField, ok := execResultFields[variant]
-	if !ok {
-		// If variant is not explicitly mapped, use variant itself as resultField
-		// (ExecClientMessage result payload uses same field number as ExecServerMessage variant)
-		if variant > 1 {
-			resultField = variant
-		} else {
-			return nil
-		}
-	}
+	resultField := variant
 
 	if variant == 9 {
 		// Diagnostics has no rejected variant — empty success unblocks the stream
@@ -158,6 +148,63 @@ func RejectExecRequest(execRequest DecodedMessage) []byte {
 
 	rejected := EncodeField(2, WireBytes, EncodeField(2, WireBytes, "Tool not available in this environment. Use the MCP tools provided instead."))
 	return WrapExecClientMessage(id, execID, resultField, rejected)
+}
+
+// execVariantFields are the ExecServerMessage oneof field numbers this port
+// knows how to answer with a rejected/empty result (agent.v1 ExecServerMessage).
+// Cursor CLI builds also emit newer variants outside this set (27-31, 37-38,
+// 40-55); those are answered with an ExecClientThrow instead, which is how omp
+// answers any variant it has no handler for.
+var execVariantFields = map[int]bool{
+	2: true, 3: true, 4: true, 5: true, 7: true, 8: true, 9: true,
+	16: true, 20: true, 23: true, 36: true,
+}
+
+// ExecClientControlFrames builds the two client frames that decline to execute
+// an IDE builtin: a throw naming the variant, then a stream close.
+//
+// AgentClientMessage.execClientControlMessage is field 5; within it throw = 2
+// (id = 1, error = 2, errorCode = 4) and streamClose = 1 (id = 1), matching
+// agent.v1.ExecClientControlMessage. The server reads the throw as "the client
+// could not run this tool" and keeps the turn going, so the model can fall back
+// to MCP tools or a text answer instead of the turn dying with an error.
+func ExecClientControlFrames(execRequest DecodedMessage, errMessage, errCode string) [][]byte {
+	id := execRequestID(execRequest)
+
+	throw := ConcatBuffers(
+		EncodeField(1, WireVarint, uint64(id)),
+		EncodeField(2, WireBytes, []byte(errMessage)),
+		EncodeField(4, WireBytes, []byte(errCode)),
+	)
+	control := EncodeField(2, WireBytes, throw)
+
+	streamClose := EncodeField(1, WireBytes, EncodeField(1, WireVarint, uint64(id)))
+
+	return [][]byte{
+		WrapConnectRPCFrame(EncodeField(5, WireBytes, control)),
+		WrapConnectRPCFrame(EncodeField(5, WireBytes, streamClose)),
+	}
+}
+
+// execRequestID reads ExecServerMessage.id (field 1).
+func execRequestID(execRequest DecodedMessage) uint64 {
+	if execRequest.Has(1) {
+		return execRequest.Get(1)[0].Varint
+	}
+	return 0
+}
+
+// ExecRequestVariant returns the oneof field number identifying the requested
+// IDE tool. Field 1 is the message id, 15 is exec_id, and 19/55 carry
+// trace/context metadata (RequestTracingData / flags) that arrive alongside the
+// variant, so none of them identify the tool.
+func ExecRequestVariant(execRequest DecodedMessage) int {
+	for _, k := range execRequest.Keys() {
+		if k != 1 && k != 15 && k != 19 && k != 55 {
+			return k
+		}
+	}
+	return 0
 }
 
 // EncodeKvClientMessage responds to KvServerMessage blob requests.

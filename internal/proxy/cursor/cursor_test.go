@@ -226,3 +226,118 @@ func TestRejectExecRequest(t *testing.T) {
 	}
 }
 
+// TestBuildAgentRunFrameToolContinuation verifies that a normal tool turn
+// (user, assistant tool_call, tool result) is not dropped: the tool call and
+// its result must survive into history, and the current turn must be built
+// from the trailing tool result (not the earlier user question) so the
+// agent continues from what actually happened last.
+func TestBuildAgentRunFrameToolContinuation(t *testing.T) {
+	msgs := []any{
+		map[string]any{"role": "user", "content": "run the tool"},
+		map[string]any{
+			"role":    "assistant",
+			"content": "",
+			"tool_calls": []any{
+				map[string]any{
+					"id":   "call_1",
+					"type": "function",
+					"function": map[string]any{
+						"name":      "get_weather",
+						"arguments": "{}",
+					},
+				},
+			},
+		},
+		map[string]any{"role": "tool", "tool_call_id": "call_1", "content": "sunny, 22C"},
+	}
+	frame := BuildAgentRunFrame(msgs, "gpt-5.2", nil)
+	body := frame[5:]
+	clientMsg := DecodeMessage(body)
+	run := DecodeMessage(clientMsg.Get(1)[0].Value)
+	action := DecodeMessage(run.Get(2)[0].Value)
+	userAction := DecodeMessage(action.Get(1)[0].Value)
+
+	if !userAction.Has(1) {
+		t.Fatalf("missing user message")
+	}
+	userMessage := DecodeMessage(userAction.Get(1)[0].Value)
+	if !userMessage.Has(1) {
+		t.Fatalf("missing user message text")
+	}
+	gotText := string(userMessage.Get(1)[0].Value)
+	if gotText != "sunny, 22C" {
+		t.Fatalf("expected current turn to be the tool result, got %q", gotText)
+	}
+
+	if !userAction.Has(7) {
+		t.Fatalf("expected tool call + user question to survive into history")
+	}
+	history := DecodeMessage(userAction.Get(7)[0].Value)
+	if len(history.Get(1)) != 2 {
+		t.Fatalf("expected 2 history entries (user question + assistant tool_call), got %d", len(history.Get(1)))
+	}
+}
+
+// An exec variant without a known rejected shape (newer Cursor CLI builds send
+// 27-31, 36-38, 40-55) must be declined with a throw + stream close rather than
+// ending the turn with "unsupported IDE tool".
+func TestExecClientControlFrames(t *testing.T) {
+	execReq := DecodeMessage(ConcatBuffers(
+		EncodeField(1, WireVarint, 7),
+		EncodeField(15, WireBytes, "exec-1"),
+		EncodeField(27, WireBytes, []byte{}),
+	))
+
+	if got := ExecRequestVariant(execReq); got != 27 {
+		t.Fatalf("expected variant 27, got %d", got)
+	}
+	if rej := RejectExecRequest(execReq); rej != nil {
+		t.Fatalf("variant 27 has no known rejected shape, want nil, got %d bytes", len(rej))
+	}
+	// A known variant still gets the rejected result it always had.
+	known := DecodeMessage(ConcatBuffers(
+		EncodeField(1, WireVarint, 8),
+		EncodeField(2, WireBytes, []byte{}),
+	))
+	if rej := RejectExecRequest(known); rej == nil {
+		t.Fatalf("variant 2 must still be answered with a rejected result")
+	}
+
+	frames := ExecClientControlFrames(execReq, "cannot execute", "exec_variant_unsupported")
+	if len(frames) != 2 {
+		t.Fatalf("expected throw + stream close, got %d frames", len(frames))
+	}
+
+	var payloads [][]byte
+	for _, f := range frames {
+		DecodeAgentFrames(f, func(p []byte) {
+			payloads = append(payloads, append([]byte(nil), p...))
+		})
+	}
+	if len(payloads) != 2 {
+		t.Fatalf("expected 2 decoded frames, got %d", len(payloads))
+	}
+
+	// AgentClientMessage.execClientControlMessage = 5, throw = 2.
+	throwMsg := DecodeMessage(payloads[0])
+	if !throwMsg.Has(5) {
+		t.Fatalf("missing execClientControlMessage")
+	}
+	throw := DecodeMessage(DecodeMessage(throwMsg.Get(5)[0].Value).Get(2)[0].Value)
+	if got := throw.Get(1)[0].Varint; got != 7 {
+		t.Fatalf("throw id = %d, want 7", got)
+	}
+	if got := string(throw.Get(2)[0].Value); got != "cannot execute" {
+		t.Fatalf("throw error = %q", got)
+	}
+	if got := string(throw.Get(4)[0].Value); got != "exec_variant_unsupported" {
+		t.Fatalf("throw errorCode = %q", got)
+	}
+
+	// streamClose = 1.
+	closeMsg := DecodeMessage(payloads[1])
+	streamClose := DecodeMessage(DecodeMessage(closeMsg.Get(5)[0].Value).Get(1)[0].Value)
+	if got := streamClose.Get(1)[0].Varint; got != 7 {
+		t.Fatalf("streamClose id = %d, want 7", got)
+	}
+}

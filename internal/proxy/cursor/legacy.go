@@ -49,20 +49,20 @@ const (
 	FieldLegacyMsgSupportedTools = 51
 
 	// Response fields
-	FieldLegacyToolCall         = 1
-	FieldLegacyResponse         = 2
-	FieldLegacyToolID           = 3
-	FieldLegacyToolName         = 9
-	FieldLegacyToolRawArgs      = 10
-	FieldLegacyToolIsLast       = 11
-	FieldLegacyToolIsLastAlt    = 15
-	FieldLegacyToolMCPParams    = 27
-	FieldLegacyMCPToolsList     = 1
-	FieldLegacyMCPNestedName    = 1
-	FieldLegacyMCPNestedParams  = 3
-	FieldLegacyResponseText     = 1
-	FieldLegacyThinking         = 25
-	FieldLegacyThinkingText     = 1
+	FieldLegacyToolCall        = 1
+	FieldLegacyResponse        = 2
+	FieldLegacyToolID          = 3
+	FieldLegacyToolName        = 9
+	FieldLegacyToolRawArgs     = 10
+	FieldLegacyToolIsLast      = 11
+	FieldLegacyToolIsLastAlt   = 15
+	FieldLegacyToolMCPParams   = 27
+	FieldLegacyMCPToolsList    = 1
+	FieldLegacyMCPNestedName   = 1
+	FieldLegacyMCPNestedParams = 3
+	FieldLegacyResponseText    = 1
+	FieldLegacyThinking        = 25
+	FieldLegacyThinkingText    = 1
 
 	// ToolResult structure fields
 	FieldToolResultCallID      = 1
@@ -336,6 +336,42 @@ func GenerateLegacyCursorBody(messages []any, modelName string, tools []any, rea
 	var encodedMsgs [][]byte
 	var msgIDParts [][]byte
 
+	// Pre-scan assistant tool_calls so a role:"tool" follow-up can be encoded
+	// through EncodeToolResult: an OpenAI tool message carries only
+	// tool_call_id, while the Cursor ClientSideToolV2Result also needs the tool
+	// name and arguments from the call it answers.
+	type toolCallMeta struct{ name, arguments string }
+	callMeta := make(map[string]toolCallMeta)
+	for _, m := range messages {
+		mMap, ok := m.(map[string]any)
+		if !ok {
+			continue
+		}
+		if roleStr, _ := mMap["role"].(string); roleStr != "assistant" {
+			continue
+		}
+		tcs, ok := mMap["tool_calls"].([]any)
+		if !ok {
+			continue
+		}
+		for _, tc := range tcs {
+			tcMap, ok := tc.(map[string]any)
+			if !ok {
+				continue
+			}
+			id, _ := tcMap["id"].(string)
+			if id == "" {
+				continue
+			}
+			meta := toolCallMeta{}
+			if fn, ok := tcMap["function"].(map[string]any); ok {
+				meta.name, _ = fn["name"].(string)
+				meta.arguments, _ = fn["arguments"].(string)
+			}
+			callMeta[id] = meta
+		}
+	}
+
 	for i, m := range messages {
 		mMap, ok := m.(map[string]any)
 		if !ok {
@@ -355,6 +391,30 @@ func GenerateLegacyCursorBody(messages []any, modelName string, tools []any, rea
 					toolResults = append(toolResults, trm)
 				}
 			}
+		}
+
+		// An OpenAI tool follow-up is a real tool result, not just user text:
+		// encode it through EncodeToolResult so Cursor receives a
+		// ClientSideToolV2Result/ClientSideToolV2Call pair for the call it
+		// answers. The textual content is kept as well, so the model still sees
+		// the result if the tool result fields are ignored.
+		if roleStr == "tool" {
+			callID, _ := mMap["tool_call_id"].(string)
+			meta := callMeta[callID]
+			name, _ := mMap["name"].(string)
+			if name == "" {
+				name = meta.name
+			}
+			args := meta.arguments
+			if args == "" {
+				args = "{}"
+			}
+			toolResults = append(toolResults, map[string]any{
+				"tool_call_id":   callID,
+				"tool_name":      name,
+				"raw_args":       args,
+				"result_content": content,
+			})
 		}
 
 		msgID := uuid.New().String()

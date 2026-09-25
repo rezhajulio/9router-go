@@ -2,10 +2,12 @@ package executor
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
+
+	"9router/proxy/internal/proxy"
 
 	cursorpkg "9router/proxy/internal/proxy/cursor"
 )
@@ -142,16 +144,18 @@ func TestCursorComposerThinkingNonStreaming(t *testing.T) {
 }
 
 func TestCursorLegacyServerResponse(t *testing.T) {
-	// Create mock server returning legacy connect-rpc response
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		textMsg := cursorpkg.EncodeField(1, cursorpkg.WireBytes, "Hello world")
-		respField := cursorpkg.EncodeField(1, cursorpkg.WireBytes, textMsg)
-		respMsg := cursorpkg.EncodeField(2, cursorpkg.WireBytes, respField)
+		// StreamUnifiedChatResponse (field 2) -> RESPONSE_TEXT (field 1).
+		respMsg := cursorpkg.EncodeField(2, cursorpkg.WireBytes,
+			cursorpkg.EncodeField(1, cursorpkg.WireBytes, "Hello world"))
 		frame := cursorpkg.WrapConnectRPCFrame(respMsg)
 		w.Header().Set("Content-Type", "application/connect+proto")
 		_, _ = w.Write(frame)
 	}))
 	defer server.Close()
+
+	restore := pointCursorLegacyAt(server.URL)
+	defer restore()
 
 	rec := httptest.NewRecorder()
 	body := map[string]any{
@@ -167,11 +171,156 @@ func TestCursorLegacyServerResponse(t *testing.T) {
 		APIKey:    "test-token",
 	}
 
-	// Test executeCursorLegacy directly with mocked URL pattern
-	err := executeCursorLegacy(rec, req, body, "test-token", "test-machine", true)
-	// Since executeCursorLegacy calls external https://api2.cursor.sh, in unit test without network it fails or times out.
-	// But invalid token / upstream error is handled gracefully without panic.
-	if err != nil && !strings.Contains(err.Error(), "connection") {
-		t.Logf("executeCursorLegacy returned: %v", err)
+	if err := executeCursorLegacy(rec, req, body, "test-token", "test-machine", true); err != nil {
+		t.Fatalf("executeCursorLegacy failed: %v", err)
 	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var completion struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &completion); err != nil {
+		t.Fatalf("unmarshal completion: %v (body=%s)", err, rec.Body.String())
+	}
+	if len(completion.Choices) != 1 {
+		t.Fatalf("expected 1 choice, got %d", len(completion.Choices))
+	}
+	if completion.Choices[0].Message.Content != "Hello world" {
+		t.Fatalf("expected content %q, got %q", "Hello world", completion.Choices[0].Message.Content)
+	}
+	if completion.Choices[0].FinishReason != "stop" {
+		t.Fatalf("expected finish_reason stop, got %q", completion.Choices[0].FinishReason)
+	}
+}
+
+// A non-200 from ChatService must reach the fallback layer as an error: returning
+// nil made fallback record a success, so 401s never refreshed and combos never
+// rotated.
+func TestCursorLegacyUpstreamErrorPropagates(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"message":"invalid token"}}`))
+	}))
+	defer server.Close()
+
+	restore := pointCursorLegacyAt(server.URL)
+	defer restore()
+
+	rec := httptest.NewRecorder()
+	body := map[string]any{"messages": []any{map[string]any{"role": "user", "content": "hi"}}}
+	b, _ := json.Marshal(body)
+	req := &Request{ModelName: "gpt-5.2", Body: b, APIKey: "bad-token"}
+
+	err := executeCursorLegacy(rec, req, body, "bad-token", "test-machine", true)
+	var ue *proxy.UpstreamError
+	if !errors.As(err, &ue) {
+		t.Fatalf("expected *proxy.UpstreamError, got %T (%v)", err, err)
+	}
+	if ue.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected status 401, got %d", ue.StatusCode)
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("executor must not write the body itself, got %q", rec.Body.String())
+	}
+}
+
+// An error frame with no content must surface as an upstream error instead of a
+// 200 with an empty completion.
+func TestCursorLegacyErrorFrameWithoutContent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		frame := cursorpkg.WrapConnectRPCFrame([]byte(`{"error":{"message":"resource_exhausted"}}`))
+		_, _ = w.Write(frame)
+	}))
+	defer server.Close()
+
+	restore := pointCursorLegacyAt(server.URL)
+	defer restore()
+
+	rec := httptest.NewRecorder()
+	body := map[string]any{"messages": []any{map[string]any{"role": "user", "content": "hi"}}}
+	b, _ := json.Marshal(body)
+	req := &Request{ModelName: "gpt-5.2", Body: b, APIKey: "test-token"}
+
+	err := executeCursorLegacy(rec, req, body, "test-token", "test-machine", true)
+	var ue *proxy.UpstreamError
+	if !errors.As(err, &ue) {
+		t.Fatalf("expected *proxy.UpstreamError, got %T (%v)", err, err)
+	}
+	if ue.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("expected status 429, got %d", ue.StatusCode)
+	}
+}
+
+// A turn that emits a tool call must report finish_reason tool_calls, and the
+// response must be written exactly once.
+func TestCursorLegacyToolCallFinishReason(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var tcFields [][]byte
+		tcFields = append(tcFields, cursorpkg.EncodeField(3, cursorpkg.WireBytes, "call_1\nmc_x"))
+		tcFields = append(tcFields, cursorpkg.EncodeField(9, cursorpkg.WireBytes, "mcp_custom_bash"))
+		tcFields = append(tcFields, cursorpkg.EncodeField(10, cursorpkg.WireBytes, `{"cmd":"ls"}`))
+		tcFields = append(tcFields, cursorpkg.EncodeField(11, cursorpkg.WireVarint, 1))
+		tcMsg := cursorpkg.ConcatBuffers(tcFields...)
+		_, _ = w.Write(cursorpkg.WrapConnectRPCFrame(cursorpkg.EncodeField(1, cursorpkg.WireBytes, tcMsg)))
+	}))
+	defer server.Close()
+
+	restore := pointCursorLegacyAt(server.URL)
+	defer restore()
+
+	rec := httptest.NewRecorder()
+	body := map[string]any{"messages": []any{map[string]any{"role": "user", "content": "hi"}}}
+	b, _ := json.Marshal(body)
+	req := &Request{ModelName: "gpt-5.2", Body: b, APIKey: "test-token"}
+
+	if err := executeCursorLegacy(rec, req, body, "test-token", "test-machine", true); err != nil {
+		t.Fatalf("executeCursorLegacy failed: %v", err)
+	}
+
+	var completion struct {
+		Choices []struct {
+			Message struct {
+				ToolCalls []struct {
+					ID       string `json:"id"`
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
+			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &completion); err != nil {
+		t.Fatalf("unmarshal completion: %v (body=%s)", err, rec.Body.String())
+	}
+	if len(completion.Choices) != 1 {
+		t.Fatalf("expected 1 choice, got %d", len(completion.Choices))
+	}
+	choice := completion.Choices[0]
+	if choice.FinishReason != "tool_calls" {
+		t.Fatalf("expected finish_reason tool_calls, got %q", choice.FinishReason)
+	}
+	if len(choice.Message.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(choice.Message.ToolCalls))
+	}
+	if choice.Message.ToolCalls[0].ID != "call_1" {
+		t.Fatalf("expected tool call id call_1, got %q", choice.Message.ToolCalls[0].ID)
+	}
+}
+
+// pointCursorLegacyAt redirects the legacy ChatService endpoint at a test server.
+// The live endpoint (api2.cursor.sh) must never be contacted from a unit test:
+// with no proxy it dials the real host and blocks until the client timeout.
+func pointCursorLegacyAt(baseURL string) func() {
+	previous := cursorChatBaseURL
+	cursorChatBaseURL = baseURL
+	return func() { cursorChatBaseURL = previous }
 }

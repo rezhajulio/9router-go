@@ -189,3 +189,40 @@ func TestBuildAgentRunFrame(t *testing.T) {
 		t.Fatalf("custom_system_prompt (field 8) must not be present")
 	}
 }
+
+func TestRejectExecRequest(t *testing.T) {
+	// Standard IDE builtin (field 2)
+	req2 := ConcatBuffers(
+		EncodeField(1, WireVarint, 1),
+		EncodeField(2, WireBytes, "shell"),
+	)
+	msg2 := DecodeMessage(req2)
+	rej2 := RejectExecRequest(msg2)
+	if rej2 == nil {
+		t.Fatalf("expected rejection frame for field 2")
+	}
+
+	// MCP server inspection / IDE exec with field 36 and context metadata 19 & 55
+	req36 := ConcatBuffers(
+		EncodeField(1, WireVarint, 1),
+		EncodeField(19, WireBytes, "tracing_data"),
+		EncodeField(36, WireBytes, EncodeField(1, WireBytes, "9router")),
+		EncodeField(55, WireVarint, 0),
+	)
+	msg36 := DecodeMessage(req36)
+	rej36 := RejectExecRequest(msg36)
+	if rej36 == nil {
+		t.Fatalf("expected rejection frame for field 36 with metadata")
+	}
+
+	// Verify rejected frame wraps Connect-RPC and ExecClientMessage (field 2)
+	dec := DecodeMessage(rej36[5:])
+	if !dec.Has(2) {
+		t.Fatalf("expected ExecClientMessage (field 2)")
+	}
+	execClient := DecodeMessage(dec.Get(2)[0].Value)
+	if !execClient.Has(36) {
+		t.Fatalf("expected result payload under field 36")
+	}
+}
+

@@ -141,22 +141,19 @@ func BuildAgentRunFrame(messages []any, model string, tools []any) []byte {
 	}
 
 	system := strings.Join(systemParts, "\n\n")
-	currentIndex := -1
-	for i := len(chatMessages) - 1; i >= 0; i-- {
-		if r, _ := chatMessages[i]["role"].(string); r == "user" {
-			currentIndex = i
-			break
-		}
-	}
 
+	// Split the conversation into the current turn and history.
+	//
+	// The tail is the current turn, so a trailing tool/assistant message counts:
+	// after a tool round-trip the tail is "assistant tool_call, tool result" and
+	// there is no later user message, so taking the last *user* message as the
+	// turn (upstream's split) dropped the tool call and its result entirely.
+	// Everything before the tail is history, so nothing is discarded.
 	var current map[string]any
 	var historyMessages []map[string]any
-	if currentIndex >= 0 {
-		current = chatMessages[currentIndex]
-		historyMessages = chatMessages[:currentIndex]
-	} else if len(chatMessages) > 0 {
-		current = chatMessages[len(chatMessages)-1]
-		historyMessages = chatMessages[:len(chatMessages)-1]
+	if n := len(chatMessages); n > 0 {
+		current = chatMessages[n-1]
+		historyMessages = chatMessages[:n-1]
 	}
 
 	var history [][]byte

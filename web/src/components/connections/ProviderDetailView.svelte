@@ -2123,6 +2123,15 @@
     }
   }
 
+  // Count only the saves that actually succeeded. Counting as we enqueue hid
+  // partial failures: one rejected saveCustomModel still reported every queued
+  // model as imported.
+  async function countFulfilled(promises: Promise<unknown>[]): Promise<number> {
+    if (promises.length === 0) return 0
+    const results = await Promise.allSettled(promises)
+    return results.filter((r) => r.status === 'fulfilled').length
+  }
+
   function copyCompatibleModel(modelId: string) {
     navigator.clipboard.writeText(`${displayAlias()}/${modelId}`)
     copiedModelId = modelId
@@ -2153,15 +2162,17 @@
             type: 'llm',
           })
         )
-        imported += 1
       }
-      if (savePromises.length > 0) {
-        await Promise.all(savePromises)
-      }
+      imported = await countFulfilled(savePromises)
       await refreshCompatibleModels()
       if (imported > 0) {
         notifyCustomModelsChanged()
         notifications.success(`Successfully imported ${imported} model(s).`)
+        if (imported < savePromises.length) {
+          notifications.warning(`${savePromises.length - imported} model(s) failed to save.`)
+        }
+      } else if (savePromises.length > 0) {
+        notifications.error('Failed to import models')
       } else {
         notifications.info('All models already exist, no new models added.')
       }
@@ -2211,16 +2222,18 @@
             ...(caps ? { caps } : {}),
           })
         )
-        imported++
       }
-      if (savePromises.length > 0) {
-        await Promise.all(savePromises)
-      }
+      imported = await countFulfilled(savePromises)
       const modelsData = await fetchProviderModelsData(providerId, storageAlias)
       customModels = modelsData.customModels
       if (imported > 0) {
         notifyCustomModelsChanged()
         notifications.success(`Successfully imported ${imported} model(s).`)
+        if (imported < savePromises.length) {
+          notifications.warning(`${savePromises.length - imported} model(s) failed to save.`)
+        }
+      } else if (savePromises.length > 0) {
+        notifications.error('Failed to import models')
       } else {
         notifications.info('All models already exist, no new models added.')
       }

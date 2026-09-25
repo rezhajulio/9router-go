@@ -20,17 +20,17 @@ const (
 
 // Agent / Protobuf field constants
 const (
-	FieldRunRequest          = 1
-	FieldAction              = 2
-	FieldModelDetails        = 3
-	FieldMcpTools            = 4
-	FieldRequestedModel      = 9
-	FieldInteractionUpdate   = 1
-	FieldExecRequest         = 2
-	FieldKvServerMessage     = 4
-	FieldTextDelta           = 1
-	FieldThinkingDelta       = 4
-	FieldTurnEnded           = 14
+	FieldRunRequest        = 1
+	FieldAction            = 2
+	FieldModelDetails      = 3
+	FieldMcpTools          = 4
+	FieldRequestedModel    = 9
+	FieldInteractionUpdate = 1
+	FieldExecRequest       = 2
+	FieldKvServerMessage   = 4
+	FieldTextDelta         = 1
+	FieldThinkingDelta     = 4
+	FieldTurnEnded         = 14
 )
 
 // Value types for google.protobuf.Value
@@ -214,10 +214,14 @@ func DecodeField(buffer []byte, offset int) (fieldNum int, wireType int, field D
 		if err != nil {
 			return 0, 0, DecodedField{}, offset, err
 		}
-		end := nextPos + int(length)
-		if end > len(buffer) {
+		// A length that doesn't fit in a (signed, 64-bit-safe) int would turn
+		// end := nextPos + int(length) negative, passing the "end > len"
+		// bounds check and panicking on the slice below. Reject it before
+		// converting instead of trusting an attacker-controlled varint.
+		if length > uint64(len(buffer)-nextPos) {
 			return 0, 0, DecodedField{}, offset, fmt.Errorf("length delimiter exceeds buffer")
 		}
+		end := nextPos + int(length)
 		field = DecodedField{WireType: wireType, Value: buffer[nextPos:end]}
 		newOffset = end
 

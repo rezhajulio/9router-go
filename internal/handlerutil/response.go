@@ -153,3 +153,27 @@ func GetSessionID(ctx context.Context) string {
 	return ""
 }
 
+type userAgentKey struct{}
+
+// WithUserAgent returns a context carrying the inbound request's User-Agent
+// header, so downstream executors can inspect the original client (e.g.
+// Claude Code CLI) without needing the *http.Request threaded through every
+// call. ConnData only carries per-connection provider config, not the
+// caller's headers, so this is the correct channel for that signal.
+func WithUserAgent(ctx context.Context, userAgent string) context.Context {
+	if userAgent == "" || ctx == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, userAgentKey{}, userAgent)
+}
+
+// GetUserAgent retrieves the inbound request's User-Agent from the context if present.
+func GetUserAgent(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if val, ok := ctx.Value(userAgentKey{}).(string); ok {
+		return val
+	}
+	return ""
+}

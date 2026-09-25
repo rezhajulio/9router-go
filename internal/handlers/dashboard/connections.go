@@ -15,6 +15,8 @@ import (
 
 	"9router/proxy/internal/handlerutil"
 	"9router/proxy/internal/models"
+	"9router/proxy/internal/providers"
+	cursorpkg "9router/proxy/internal/proxy/cursor"
 )
 
 // HandleGetConnections handles GET /api/connections.
@@ -838,6 +840,55 @@ func (h *DashboardHandler) HandleGetConnectionModels(w http.ResponseWriter, r *h
 			"provider":     conn.Provider,
 			"connectionId": conn.ID,
 			"models":       models,
+		})
+		return
+	}
+
+	if conn.Provider == "cursor" {
+		token := connData.AccessToken
+		if token == "" {
+			token = connData.APIKey
+		}
+		machineID := ""
+		ghostMode := true
+		if connData.ProviderSpecificData != nil {
+			if m, ok := connData.ProviderSpecificData["machineId"].(string); ok {
+				machineID = m
+			}
+			if g, ok := connData.ProviderSpecificData["ghostMode"].(bool); ok {
+				ghostMode = g
+			}
+		}
+		if token == "" || machineID == "" {
+			handlerutil.WriteJSONError(w, http.StatusBadRequest, "Cursor connection missing token or machineId")
+			return
+		}
+
+		liveModels, err := cursorpkg.ResolveCursorModels(r.Context(), token, machineID, ghostMode, true)
+		if err != nil || len(liveModels) == 0 {
+			// Fall back to static catalog
+			staticModels := providers.GetProviderModels("cursor")
+			var out []modelItem
+			for _, mID := range staticModels {
+				out = append(out, modelItem{ID: mID, Name: mID})
+			}
+			handlerutil.WriteJSON(w, http.StatusOK, map[string]any{
+				"provider":     conn.Provider,
+				"connectionId": conn.ID,
+				"models":       out,
+				"warning":      "Cursor returned no live models; falling back to static catalog.",
+			})
+			return
+		}
+
+		var out []modelItem
+		for _, m := range liveModels {
+			out = append(out, modelItem{ID: m.ID, Name: m.Name})
+		}
+		handlerutil.WriteJSON(w, http.StatusOK, map[string]any{
+			"provider":     conn.Provider,
+			"connectionId": conn.ID,
+			"models":       out,
 		})
 		return
 	}

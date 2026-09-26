@@ -134,6 +134,11 @@ func TestHandleTunnelEndpoints(t *testing.T) {
 	})
 
 	t.Run("TailscaleEnable_ReturnsCleanError", func(t *testing.T) {
+		orig := unixTailscaleCandidates
+		unixTailscaleCandidates = nil
+		defer func() { unixTailscaleCandidates = orig }()
+		t.Setenv("PATH", "")
+
 		req := httptest.NewRequest(http.MethodPost, "/api/tunnel/tailscale-enable", nil)
 		rec := httptest.NewRecorder()
 

@@ -19,6 +19,7 @@ import (
 	"9router/proxy/internal/handlers/shared"
 	"9router/proxy/internal/log"
 	"9router/proxy/internal/models"
+	cursorpkg "9router/proxy/internal/proxy/cursor"
 )
 
 // Live model discovery for /v1/models, ported from the upstream
@@ -82,6 +83,12 @@ var liveCatalogStore = struct {
 	entries map[string]liveCatalogEntry
 }{entries: make(map[string]liveCatalogEntry)}
 
+func clearLiveCatalogStore() {
+	liveCatalogStore.mu.Lock()
+	defer liveCatalogStore.mu.Unlock()
+	liveCatalogStore.entries = make(map[string]liveCatalogEntry)
+}
+
 // resolveLiveCatalog returns the live catalog for a provider connection, or nil
 // when the provider has no live resolver or discovery failed. Callers fall back
 // to the static registry, exactly like upstream's `live?.models?.length` guard.
@@ -112,6 +119,10 @@ func (h *ChatHandler) resolveLiveCatalog(ctx context.Context, conn *models.Provi
 		// own /models endpoint reports.
 		fetch = func(ctx context.Context, _ string) []LiveModel {
 			return h.fetchCompatibleNodeModels(ctx, conn, connData, providerID)
+		}
+	case providerID == "cursor":
+		fetch = func(ctx context.Context, token string) []LiveModel {
+			return h.fetchCursorLiveCatalog(ctx, conn, connData, token)
 		}
 	default:
 		return nil
@@ -567,4 +578,42 @@ func firstPositiveInt(item map[string]any, keys ...string) int {
 		}
 	}
 	return 0
+}
+
+func (h *ChatHandler) fetchCursorLiveCatalog(ctx context.Context, conn *models.ProviderConnection, connData *shared.ConnectionData, token string) []LiveModel {
+	machineID := ""
+	ghostMode := true
+	if connData != nil && connData.ProviderSpecificData != nil {
+		if m, ok := connData.ProviderSpecificData["machineId"].(string); ok {
+			machineID = m
+		}
+		if g, ok := connData.ProviderSpecificData["ghostMode"].(bool); ok {
+			ghostMode = g
+		}
+	}
+	if machineID == "" && conn != nil && conn.Data != "" {
+		var raw struct {
+			MachineID string `json:"machineId"`
+		}
+		_ = json.Unmarshal([]byte(conn.Data), &raw)
+		machineID = raw.MachineID
+	}
+	if token == "" || machineID == "" {
+		return nil
+	}
+	ctxTimeout, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	liveModels, err := cursorpkg.ResolveCursorModels(ctxTimeout, token, machineID, ghostMode, false)
+	if err != nil {
+		log.Warn("models", "Cursor live model fetch failed", "error", err)
+		return nil
+	}
+	var out []LiveModel
+	for _, m := range liveModels {
+		out = append(out, LiveModel{
+			ID:   m.ID,
+			Name: m.Name,
+		})
+	}
+	return out
 }

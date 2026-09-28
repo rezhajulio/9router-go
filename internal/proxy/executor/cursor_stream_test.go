@@ -57,7 +57,7 @@ func TestStreamCursorAgentEmitsSingleTerminal(t *testing.T) {
 			rec := httptest.NewRecorder()
 			session := &agentSession{body: io.NopCloser(bytes.NewReader(tt.chunk))}
 
-			err := streamCursorAgent(rec, &Request{}, session, "gpt-5.6", false, "chatcmpl-test", 1)
+			err := streamCursorAgent(rec, &Request{}, session, "gpt-5.6", false, "chatcmpl-test", 1, nil)
 
 			if tt.name == "stream ends without turn end and without output" {
 				// Nothing was produced: this must be reported as a failed attempt,

@@ -296,6 +296,8 @@ func TestExecClientControlFrames(t *testing.T) {
 	}
 	// Upstream's mapped set (cursor.js:215-216 EXEC_RESULT_FIELD) plus 36 must all
 	// still get a rejected result: narrowing it would break contract parity.
+	// Shell-stream (14) answers under the shell result field (2), matching
+	// OmniRoute's encodeExecShellRejected (ECM_SHELL_RESULT).
 	for _, variant := range []int{2, 3, 4, 5, 7, 8, 9, 16, 20, 23, 36} {
 		known := DecodeMessage(ConcatBuffers(
 			EncodeField(1, WireVarint, 8),

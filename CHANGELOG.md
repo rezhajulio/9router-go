@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### ✨ Cursor builtin tool bridging (OmniRoute parity)
+
+- When the Cursor AgentService asked the client to run a native IDE builtin (shell, read, …) the proxy could only decline it, so agent harnesses like Amp stalled or degraded on the "requested IDE tool variant … which this proxy cannot execute" throw. The proxy now bridges the request onto a schema-compatible tool the caller declared: a native shell request becomes a call to the client's `bash`/`shell`/`run_terminal_cmd` tool, a native read becomes a call to `read`/`read_file`. The typed rejection still goes upstream; the bridged call is emitted as a normal OpenAI `tool_call` so the harness executes it and returns the result on the next turn.
+- Bridging is fail-closed, ported from OmniRoute's `builtinToolBridge.ts`: only the small schema subset with proven-valid generated values is accepted (any unknown validation keyword fails the bridge), a shell request carrying a Cursor timeout/hard-timeout is never bridged (the external schema cannot express those limits), and background shells stay rejected (they need the client platform via `pty_spawn`, which this proxy does not know).
+- Shell-stream (variant 14) rejections now answer under the shell result field (2), matching OmniRoute's `encodeExecShellRejected` (`ECM_SHELL_RESULT`), instead of falling through to throw + stream close.
+
 ### ✨ Feature integration suite + `integration` CI job
 
 - **The gap this closes.** Every Go test until now called a handler directly or mounted a hand-built `chi` router. That shape cannot see a regression in the wiring production actually uses, and the failures it hides are exactly the ones nobody can reproduce by hand later: a route registered in the wrong auth group, the `middleware.RequestLogger` `/v1` rewrite dropped so every documented OpenAI URL 404s, account rotation no longer skipping a throttled connection, usage no longer being recorded. `internal/handlers/router_test.go` already documents two of these having shipped — the CLI-Tools 401 and the Codex reset-credit 404 — both found after the fact, both because a route was wired into a table the tests exercised but the server did not.
@@ -21,6 +27,7 @@
 - **The list is fetched on open, not on every poll.** The row counter keeps costing nothing; opening the chooser is what calls the endpoint, and the server returns them soonest-expiry first so the default selection is the one that frees the quota soonest. Radio selection, the empty/loading/error states and the redeem button disabling themselves are all in the new modal.
 - **The refresher is wired as `nil`, deliberately.** `codexquota` supports a 401/403 refresh-and-retry, but the dashboard has no OAuth refresher of its own and importing the chat package's would drag provider-specific token persistence across package boundaries — the same reason `fetchCodexUsage` passes none today. The seam is implemented and tested; leaving it dormant is honest, where a half-wired refresher would silently fail to persist a rotated token.
 - **Verification:** 2060 Go tests across 35 packages, 87 web tests, gofmt + vet + `tsc -b` clean. 22 new Go tests cover the parsing contract (filtering, ordering, all eight payload shapes, count reporting), selection, every outcome code, the headers actually sent, the refresh-once-on-401, and that the consume body carries the chosen credit plus the idempotency key; 7 handler tests pin that the new routes are reachable past the `/usage/{connectionId}` parameter route and that a non-Codex or API-key connection is refused before any upstream call.
+
 
 ### 🐛 Stream tanpa `finish_reason` membuat client gagal dengan "stream closed before a finish_reason was received"
 

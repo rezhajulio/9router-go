@@ -79,13 +79,13 @@ func executeCursorAgent(w http.ResponseWriter, req *Request, bodyMap map[string]
 	w = newCursorRecorderWriter(w, req)
 
 	if isStream {
-		return streamCursorAgent(w, req, session, model, composerModel, responseID, created)
+		return streamCursorAgent(w, req, session, model, composerModel, responseID, created, cursorpkg.ParseClientTools(tools))
 	}
-	return respondCursorAgent(w, session, model, composerModel, responseID, created, req)
+	return respondCursorAgent(w, session, model, composerModel, responseID, created, req, cursorpkg.ParseClientTools(tools))
 }
 
 // streamCursorAgent relays an AgentService turn as OpenAI SSE chunks.
-func streamCursorAgent(w http.ResponseWriter, req *Request, session *agentSession, model string, composerModel bool, responseID string, created int64) error {
+func streamCursorAgent(w http.ResponseWriter, req *Request, session *agentSession, model string, composerModel bool, responseID string, created int64, clientTools []cursorpkg.ClientTool) error {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -225,7 +225,27 @@ func streamCursorAgent(w http.ResponseWriter, req *Request, session *agentSessio
 						writeSSEToolCall(w, flusher, responseID, created, model, tcID, name, string(argsJSON), toolIndex)
 						toolIndex++
 					default:
-						if rej := cursorpkg.RejectExecRequest(execReq); rej != nil {
+						// OmniRoute parity: a native IDE builtin (shell/read)
+						// the model asked for is bridged onto a
+						// schema-compatible client tool when one exists,
+						// instead of only being declined. The typed rejection
+						// still goes upstream; the bridged call is emitted as
+						// a normal OpenAI tool_call so the harness can
+						// execute it and return the result on the next turn.
+						if bridge := cursorpkg.BridgeBuiltinTool(cursorpkg.DecodeBuiltinEvent(execReq), clientTools); bridge != nil {
+							if rej := cursorpkg.RejectExecRequest(execReq); rej != nil {
+								_ = session.Write(rej)
+							} else {
+								writeExecControlFrames(session, execReq,
+									fmt.Sprintf("Cursor AgentService requested IDE tool variant %d, which this proxy cannot execute", cursorpkg.ExecRequestVariant(execReq)),
+									"exec_variant_unsupported")
+							}
+							tcID := fmt.Sprintf("call_%s", uuid.New().String())
+							argsJSON, _ := json.Marshal(bridge.Arguments)
+							completionChars += len(argsJSON)
+							writeSSEToolCall(w, flusher, responseID, created, model, tcID, bridge.ToolName, string(argsJSON), toolIndex)
+							toolIndex++
+						} else if rej := cursorpkg.RejectExecRequest(execReq); rej != nil {
 							_ = session.Write(rej)
 						} else {
 							// A Cursor IDE builtin this proxy cannot execute, or a
@@ -307,7 +327,7 @@ func writeExecControlFrames(session *agentSession, execReq cursorpkg.DecodedMess
 }
 
 // respondCursorAgent collects an AgentService turn and writes one chat.completion.
-func respondCursorAgent(w http.ResponseWriter, session *agentSession, model string, composerModel bool, responseID string, created int64, req *Request) error {
+func respondCursorAgent(w http.ResponseWriter, session *agentSession, model string, composerModel bool, responseID string, created int64, req *Request, clientTools []cursorpkg.ClientTool) error {
 	var content string
 	var thinking string
 	var toolCalls []map[string]any
@@ -396,7 +416,32 @@ func respondCursorAgent(w http.ResponseWriter, session *agentSession, model stri
 						// the turn ends when the server says so.
 						finishReason = "tool_calls"
 					default:
-						if rej := cursorpkg.RejectExecRequest(execReq); rej != nil {
+						// OmniRoute parity: bridge a native IDE builtin onto a
+						// schema-compatible client tool when one exists. The
+						// typed rejection still goes upstream; the bridged call
+						// is collected as a normal OpenAI tool_call.
+						if bridge := cursorpkg.BridgeBuiltinTool(cursorpkg.DecodeBuiltinEvent(execReq), clientTools); bridge != nil {
+							if rej := cursorpkg.RejectExecRequest(execReq); rej != nil {
+								_ = session.Write(rej)
+							} else {
+								writeExecControlFrames(session, execReq,
+									fmt.Sprintf("Cursor AgentService requested IDE tool variant %d, which this proxy cannot execute", cursorpkg.ExecRequestVariant(execReq)),
+									"exec_variant_unsupported")
+							}
+							tcID := fmt.Sprintf("call_%s", uuid.New().String())
+							argsJSON, _ := json.Marshal(bridge.Arguments)
+							toolCalls = append(toolCalls, map[string]any{
+								"id":   tcID,
+								"type": "function",
+								"function": map[string]any{
+									"name":      bridge.ToolName,
+									"arguments": string(argsJSON),
+								},
+							})
+							// Keep reading: one turn may request several tools, and
+							// the turn ends when the server says so.
+							finishReason = "tool_calls"
+						} else if rej := cursorpkg.RejectExecRequest(execReq); rej != nil {
 							_ = session.Write(rej)
 						} else {
 							writeExecControlFrames(session, execReq,

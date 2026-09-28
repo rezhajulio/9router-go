@@ -155,10 +155,20 @@ func RejectExecRequest(execRequest DecodedMessage) []byte {
 	}
 
 	variant := ExecRequestVariant(execRequest)
-	if variant == 0 || !execVariantFields[variant] {
+	if variant == 0 {
 		return nil
 	}
 	resultField := variant
+	if variant == 14 {
+		// Shell-stream shares the shell result field: OmniRoute's
+		// encodeExecShellRejected answers both exec_shell and
+		// exec_shell_stream under ECM_SHELL_RESULT (2), and the generic
+		// refusal blob is shaped correctly for it (the refusal string
+		// sits under field 2 there).
+		resultField = 2
+	} else if !execVariantFields[variant] {
+		return nil
+	}
 
 	if variant == 9 {
 		// Diagnostics has no rejected variant — empty success unblocks the stream
@@ -184,7 +194,8 @@ func RejectExecRequest(execRequest DecodedMessage) []byte {
 //
 // Variants outside this set — the newer CLI frames (27-31, 37-38, 40-55) — are
 // answered with ExecClientControlFrames, keeping the turn alive, where upstream
-// would end it.
+// would end it. Shell-stream (14) is answered under the shell result field
+// (2) instead; see RejectExecRequest.
 var execVariantFields = map[int]bool{
 	2: true, 3: true, 4: true, 5: true, 7: true, 8: true, 9: true,
 	16: true, 20: true, 23: true, 36: true,

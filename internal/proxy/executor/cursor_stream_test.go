@@ -94,6 +94,32 @@ func TestStreamCursorAgentEmitsSingleTerminal(t *testing.T) {
 	}
 }
 
+func TestStreamCursorAgentToolCallEndsTurn(t *testing.T) {
+	mcp := cursorpkg.ConcatBuffers(
+		cursorpkg.EncodeField(1, cursorpkg.WireBytes, "get_weather"),
+		cursorpkg.EncodeField(3, cursorpkg.WireBytes, "call_1"),
+		cursorpkg.EncodeField(5, cursorpkg.WireBytes, "get_weather"),
+	)
+	toolCallFrame := cursorpkg.WrapConnectRPCFrame(cursorpkg.EncodeField(2, cursorpkg.WireBytes,
+		cursorpkg.EncodeField(11, cursorpkg.WireBytes, mcp)))
+
+	rec := httptest.NewRecorder()
+	session := &agentSession{body: io.NopCloser(bytes.NewReader(toolCallFrame))}
+
+	err := streamCursorAgent(rec, &Request{}, session, "gpt-5.6", false, "chatcmpl-test", 1, nil)
+	if err != nil {
+		t.Fatalf("streamCursorAgent returned %v, want nil", err)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `"finish_reason":"tool_calls"`) {
+		t.Fatalf("expected finish_reason:tool_calls, got\n%s", body)
+	}
+	if got := strings.Count(body, "data: [DONE]"); got != 1 {
+		t.Fatalf("[DONE] emitted %d times, want exactly 1\n%s", got, body)
+	}
+}
+
 // lockedRecorder is an httptest.ResponseRecorder safe for concurrent use: the
 // relay loop writes from its own goroutine while the test polls the body.
 type lockedRecorder struct {

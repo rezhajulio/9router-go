@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### ✨ Cursor provider parity (decolua/9router v0.5.85 + OmniRoute)
+
+- Native Cursor IDE provider implementation supporting AgentService Connect-RPC bidi streaming (`agent.v1.AgentService/Run`) and legacy ChatService (`aiserver.v1.ChatService/StreamUnifiedChatWithTools`) over HTTP/2.
+- Dynamic model catalog discovery via `GetUsableModels` with singleflight and negative memory caching.
+- Full output translation for Claude Messages (`/v1/messages`) and Responses API (`/v1/responses`) clients.
+- Connect-RPC trailer error handling, byte-exact checksum computation matching JS 32-bit shift semantics, and fail-closed background shell bridging with `tool_choice` gating.
+- Tool-call turns correctly terminate with `finish_reason: "tool_calls"` and `data: [DONE]`.
+- Response commit safety: prevents retrying on already-committed writers after keepalive pings; honors client cancellation without triggering account backoff locks.
+- Legacy ChatService error frames are mapped like upstream: `resource_exhausted` → 429, any other Connect code → 400, instead of every error benching the account as a rate limit.
+- Truncated upstream frames and dropped connections surface as failures rather than empty or clipped `finish_reason: "stop"` successes, so account rotation and usage logging see them.
+- Partial protobuf decodes are refused: a tool call whose arguments did not decode cleanly is declined instead of handed to a client tool.
+- The hand-built AgentService socket follows `proxy.FallbackTransport` semantics: a refusing environment/sandbox proxy is retried directly, while a proxy-pool connection keeps failing closed so credentials cannot leak past it.
+- Live-catalog discovery shares one flight per credential that no longer aborts when the triggering client disconnects, and a negative cache entry never overwrites a still-valid positive one.
+- One exec request gets exactly one answer: a variant with a typed rejection is answered with that rejection, and only a variant without one gets the throw plus stream close. The streaming and non-streaming relays share one frame decoder (`cursor_agent_decode.go`) so the dispatch cannot drift between them.
+
 ### ✨ Cursor agent stream keepalive (Amp "stream stalled" fix)
 
 - AgentService turns can go quiet for minutes (long model latency, server-side tool work) while the proxy forwarded nothing to the client, so harnesses with a stream watchdog killed healthy turns — Amp reports "stream stalled after 120000 ms". The relay now reads upstream on a separate goroutine and emits an SSE comment (`: ping`) every 20s of upstream idle; comments are ignored by event parsers but count as stream activity for watchdogs. Keepalives bypass the response recorder so they don't pollute the mirrored response buffer or trip the TTFT measurement. Covered by `TestStreamCursorAgentEmitsClientKeepalive`.

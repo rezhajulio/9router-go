@@ -2,10 +2,12 @@ package executor
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"9router/proxy/internal/proxy"
@@ -351,8 +353,12 @@ func TestCursorLegacyPublishesUsage(t *testing.T) {
 			ctx := translator.WithUsageCapture(context.Background())
 			req := &Request{ModelName: "gpt-5.2", Body: b, APIKey: "test-token", IsStream: stream, Ctx: ctx}
 
-			if err := executeCursorLegacy(httptest.NewRecorder(), req, body, "test-token", "test-machine", true); err != nil {
+			rec := httptest.NewRecorder()
+			if err := executeCursorLegacy(rec, req, body, "test-token", "test-machine", true); err != nil {
 				t.Fatalf("executeCursorLegacy failed: %v", err)
+			}
+			if stream && !strings.Contains(rec.Body.String(), `"usage"`) {
+				t.Errorf("expected usage in terminal SSE chunk, got %s", rec.Body.String())
 			}
 
 			usage := translator.GetAndClearUsage(ctx)
@@ -365,4 +371,104 @@ func TestCursorLegacyPublishesUsage(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCursorLegacyTrailerErrorFrame(t *testing.T) {
+	payload := []byte(`{"error":{"code":"resource_exhausted","message":"quota exceeded"}}`)
+	frame := make([]byte, 5+len(payload))
+	frame[0] = 0x02
+	binary.BigEndian.PutUint32(frame[1:5], uint32(len(payload)))
+	copy(frame[5:], payload)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(frame)
+	}))
+	defer server.Close()
+
+	restore := pointCursorLegacyAt(server.URL)
+	defer restore()
+
+	for _, stream := range []bool{false, true} {
+		t.Run(map[bool]string{false: "non-stream", true: "stream"}[stream], func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			body := map[string]any{
+				"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+				"stream":   stream,
+			}
+			b, _ := json.Marshal(body)
+			req := &Request{ModelName: "gpt-5.2", Body: b, APIKey: "test-token", IsStream: stream}
+
+			err := executeCursorLegacy(rec, req, body, "test-token", "test-machine", true)
+			var ue *proxy.UpstreamError
+			if !errors.As(err, &ue) {
+				t.Fatalf("expected *proxy.UpstreamError, got %T (%v)", err, err)
+			}
+			if ue.StatusCode != http.StatusTooManyRequests {
+				t.Fatalf("expected status 429 for resource_exhausted trailer, got %d", ue.StatusCode)
+			}
+		})
+	}
+}
+
+func TestForwardCursorTranslatesOutput(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		textMsg := cursorpkg.EncodeField(1, cursorpkg.WireBytes, "hello from cursor")
+		respMsg := cursorpkg.EncodeField(2, cursorpkg.WireBytes, textMsg)
+		frame := cursorpkg.WrapConnectRPCFrame(respMsg)
+		_, _ = w.Write(frame)
+	}))
+	defer server.Close()
+
+	restore := pointCursorLegacyAt(server.URL)
+	defer restore()
+
+	t.Run("TranslateResp Claude non-stream", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		body := map[string]any{
+			"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+			"stream":   false,
+		}
+		b, _ := json.Marshal(body)
+		req := &Request{
+			ModelName:     "gpt-5.2",
+			Body:          b,
+			APIKey:        "test-token",
+			IsStream:      false,
+			TranslateResp: true,
+		}
+
+		err := ForwardCursor(rec, req)
+		if err != nil {
+			t.Fatalf("ForwardCursor failed: %v", err)
+		}
+		bodyStr := rec.Body.String()
+		if !strings.Contains(bodyStr, `"type":"message"`) {
+			t.Fatalf("expected Claude message format, got\n%s", bodyStr)
+		}
+	})
+
+	t.Run("TranslateResp Claude stream", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		body := map[string]any{
+			"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+			"stream":   true,
+		}
+		b, _ := json.Marshal(body)
+		req := &Request{
+			ModelName:     "gpt-5.2",
+			Body:          b,
+			APIKey:        "test-token",
+			IsStream:      true,
+			TranslateResp: true,
+		}
+
+		err := ForwardCursor(rec, req)
+		if err != nil {
+			t.Fatalf("ForwardCursor failed: %v", err)
+		}
+		bodyStr := rec.Body.String()
+		if !strings.Contains(bodyStr, "event: content_block_delta") && !strings.Contains(bodyStr, "event: message_start") {
+			t.Fatalf("expected Claude SSE event format, got\n%s", bodyStr)
+		}
+	})
 }

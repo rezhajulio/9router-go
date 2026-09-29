@@ -1,10 +1,8 @@
 package executor
 
 import (
-	"bufio"
 	"context"
 	"crypto/tls"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"net"
@@ -12,6 +10,10 @@ import (
 	"net/url"
 	"sync"
 	"time"
+
+	"9router/proxy/internal/proxy"
+
+	cursorpkg "9router/proxy/internal/proxy/cursor"
 
 	"golang.org/x/net/http2"
 )
@@ -85,7 +87,9 @@ func (s *agentSession) Close() {
 	if s.pw != nil {
 		_ = s.pw.Close()
 	}
-	if s.resp != nil && s.resp.Body != nil {
+	if s.body != nil {
+		_ = s.body.Close()
+	} else if s.resp != nil && s.resp.Body != nil {
 		_ = s.resp.Body.Close()
 	}
 	if s.clientConn != nil {
@@ -182,7 +186,7 @@ func openAgentHttp2Stream(ctx context.Context, endpointURL string, headers map[s
 		return nil, err
 	}
 	session.resp = resp
-	session.body = resp.Body
+	session.body = proxy.NewStallReaderWithContext(ctx, resp.Body, 0, "cursor-agent")
 	return session, nil
 }
 
@@ -215,139 +219,11 @@ func roundTripWithHeaderTimeout(ctx context.Context, clientConn *http2.ClientCon
 	}
 }
 
-// dialCursorH2 connects and completes the TLS handshake bound to ctx.
-// net.Dialer with tls.DialWithDialer ignores the caller's context, so a
-// cancelled client request used to keep a socket (and a goroutine) alive until
-// the dialer timeout.
-//
-// AgentService is h2-only and this socket is opened by hand, so a raw dial would
-// bypass the connection's proxy pool (and strictProxy) for the traffic that most
-// text chats use. When the request client routes through a proxy the connection
-// is therefore established with an HTTP CONNECT tunnel instead.
+// dialCursorH2 connects to host:port and completes the TLS handshake. The
+// connection is routed through the client's proxy (HTTP CONNECT) when it has
+// one, because AgentService is h2-only and this socket is opened by hand: a raw
+// dial would bypass the connection's proxy pool and strictProxy for the traffic
+// that carries the account's bearer token.
 func dialCursorH2(ctx context.Context, client *http.Client, host, port string, tlsConfig *tls.Config) (net.Conn, error) {
-	addr := net.JoinHostPort(host, port)
-	if proxyURL := clientProxyFor(client, "https://"+addr); proxyURL != nil {
-		switch proxyURL.Scheme {
-		case "http", "https":
-			return dialCursorH2ViaProxy(ctx, proxyURL, addr, tlsConfig)
-		default:
-			// Only HTTP CONNECT is implemented here; a SOCKS5 proxy (reachable via
-			// ALL_PROXY) cannot be spoken to with a CONNECT line. Failing instead of
-			// dialing direct keeps traffic from leaking past the proxy, and the
-			// caller falls back to the legacy path, which goes through net/http and
-			// supports SOCKS5 natively.
-			return nil, fmt.Errorf("cursor agent: unsupported proxy scheme %q", proxyURL.Scheme)
-		}
-	}
-
-	conn, err := (&net.Dialer{Timeout: cursorDialTimeout}).DialContext(ctx, "tcp", addr)
-	if err != nil {
-		return nil, err
-	}
-	tlsConn := tls.Client(conn, tlsConfig)
-	if err := tlsConn.HandshakeContext(ctx); err != nil {
-		_ = conn.Close()
-		return nil, err
-	}
-	return tlsConn, nil
+	return cursorpkg.DialH2(ctx, client, host, port, tlsConfig, cursorDialTimeout)
 }
-
-// dialCursorH2ViaProxy tunnels through proxyURL with CONNECT and then runs the
-// TLS handshake to addr inside the tunnel.
-func dialCursorH2ViaProxy(ctx context.Context, proxyURL *url.URL, addr string, tlsConfig *tls.Config) (net.Conn, error) {
-	proxyAddr := proxyURL.Host
-	if proxyURL.Port() == "" {
-		port := "80"
-		if proxyURL.Scheme == "https" {
-			port = "443"
-		}
-		proxyAddr = net.JoinHostPort(proxyURL.Hostname(), port)
-	}
-
-	rawConn, err := (&net.Dialer{Timeout: cursorDialTimeout}).DialContext(ctx, "tcp", proxyAddr)
-	if err != nil {
-		return nil, fmt.Errorf("proxy dial %s: %w", proxyAddr, err)
-	}
-
-	// The caller's context carries no deadline for a streaming turn, so the CONNECT
-	// exchange and the inner TLS handshake need their own bound: a proxy that
-	// accepts the TCP connection and then goes silent would otherwise hang before
-	// the response-header timeout can even start.
-	deadline := time.Now().Add(cursorDialTimeout)
-	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
-		deadline = ctxDeadline
-	}
-	if err := rawConn.SetDeadline(deadline); err != nil {
-		_ = rawConn.Close()
-		return nil, fmt.Errorf("set tunnel deadline: %w", err)
-	}
-
-	conn := net.Conn(rawConn)
-	if proxyURL.Scheme == "https" {
-		proxyTLS := tls.Client(rawConn, &tls.Config{ServerName: proxyURL.Hostname()})
-		if err := proxyTLS.HandshakeContext(ctx); err != nil {
-			_ = rawConn.Close()
-			return nil, fmt.Errorf("proxy tls handshake: %w", err)
-		}
-		conn = proxyTLS
-	}
-
-	tunnelled, err := connectThroughProxy(conn, addr, proxyURL)
-	if err != nil {
-		_ = conn.Close()
-		return nil, err
-	}
-
-	tlsConn := tls.Client(tunnelled, tlsConfig)
-	if err := tlsConn.HandshakeContext(ctx); err != nil {
-		_ = tunnelled.Close()
-		return nil, fmt.Errorf("tls handshake through proxy: %w", err)
-	}
-	// The tunnel is up: the deadline covered establishing it, not the stream.
-	if err := tlsConn.SetDeadline(time.Time{}); err != nil {
-		_ = tunnelled.Close()
-		return nil, fmt.Errorf("clear tunnel deadline: %w", err)
-	}
-	return tlsConn, nil
-}
-
-// connectThroughProxy issues "CONNECT addr" and returns a connection reading
-// through the response reader, so bytes the proxy buffered after the response
-// are not lost. Request writing and response parsing use net/http so header
-// formatting and status handling match net/http's own proxy path.
-func connectThroughProxy(conn net.Conn, addr string, proxyURL *url.URL) (net.Conn, error) {
-	req := &http.Request{
-		Method: http.MethodConnect,
-		URL:    &url.URL{Opaque: addr},
-		Host:   addr,
-		Header: make(http.Header),
-	}
-	if user := proxyURL.User; user != nil {
-		password, _ := user.Password()
-		credentials := base64.StdEncoding.EncodeToString([]byte(user.Username() + ":" + password))
-		req.Header.Set("Proxy-Authorization", "Basic "+credentials)
-	}
-	if err := req.Write(conn); err != nil {
-		return nil, fmt.Errorf("write CONNECT: %w", err)
-	}
-
-	br := bufio.NewReader(conn)
-	resp, err := http.ReadResponse(br, req)
-	if err != nil {
-		return nil, fmt.Errorf("read CONNECT response: %w", err)
-	}
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("proxy CONNECT %s failed: %s", addr, resp.Status)
-	}
-	return &bufferedConn{Conn: conn, reader: br}, nil
-}
-
-// bufferedConn keeps reads on the buffered reader used to parse the CONNECT
-// response, so already-buffered tunnel bytes stay readable.
-type bufferedConn struct {
-	net.Conn
-	reader *bufio.Reader
-}
-
-func (c *bufferedConn) Read(b []byte) (int, error) { return c.reader.Read(b) }

@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"time"
 
 	"9router/proxy/internal/proxy"
@@ -41,32 +42,61 @@ func ForwardCursor(w http.ResponseWriter, req *Request) error {
 		}
 	}
 
-	// The agent path opens its own HTTP/2 socket to AgentService, so it tunnels
-	// through the connection's proxy with CONNECT (see dialCursorH2) rather than
-	// silently dialing around a proxy pool.
+	needsTranslation := req.TranslateResp || translator.NeedsResponsesBridge(req.Ctx)
+	if !needsTranslation {
+		return forwardCursorDirect(w, req, bodyMap, accessToken, machineID, ghostMode)
+	}
+
+	isStream := req.IsStream
+	if s, ok := bodyMap["stream"].(bool); ok {
+		isStream = s
+	}
+
+	subReq := *req
+	subReq.ResponseBuf = nil
+	subReq.TTFT = nil
+
+	if !isStream {
+		rec := httptest.NewRecorder()
+		if err := forwardCursorDirect(rec, &subReq, bodyMap, accessToken, machineID, ghostMode); err != nil {
+			return err
+		}
+		return jsonResponse(req.Ctx, w, rec.Body, req.TranslateResp, req.ResponseBuf)
+	}
+
+	tw := newTranslatingWriter(w, req)
+	defer tw.Close()
+	return forwardCursorDirect(tw, &subReq, bodyMap, accessToken, machineID, ghostMode)
+}
+
+func forwardCursorDirect(w http.ResponseWriter, req *Request, bodyMap map[string]any, accessToken, machineID string, ghostMode bool) error {
 	if cursorpkg.IsAgentCapableRequest(bodyMap) {
 		agentErr := executeCursorAgent(w, req, bodyMap, accessToken, machineID, ghostMode)
 		if agentErr == nil {
 			return nil
 		}
-		// A failure after the response was committed (the client went away
-		// mid-body) must not start a second upstream turn.
 		var committed *errCursorCommitted
 		if errors.As(agentErr, &committed) {
 			return committed
 		}
-		// AgentService failed before writing anything: try the legacy ChatService.
-		// Neither path returns nil-on-failure anymore, so a 401 here still reaches
-		// the fallback layer (token refresh, combo rotation, usage logging).
+		if cw, ok := w.(interface{ IsCommitted() bool }); ok && cw.IsCommitted() {
+			return &errCursorCommitted{err: agentErr}
+		}
+		if req.Ctx != nil && req.Ctx.Err() != nil {
+			return req.Ctx.Err()
+		}
+
+		agentUpstream := asUpstreamError(agentErr)
+		if isAuthFailure(agentUpstream) || (agentUpstream != nil && agentUpstream.StatusCode == http.StatusTooManyRequests) {
+			return agentUpstream
+		}
+
 		legacyErr := executeCursorLegacy(w, req, bodyMap, accessToken, machineID, ghostMode)
 		if legacyErr == nil {
 			return nil
 		}
 
-		// Report the most actionable status: an auth failure first (the refresh
-		// path keys off 401/403), then the agent error (the primary path, whose
-		// status reflects token validity), then the legacy error.
-		agentUpstream, legacyUpstream := asUpstreamError(agentErr), asUpstreamError(legacyErr)
+		legacyUpstream := asUpstreamError(legacyErr)
 		if isAuthFailure(legacyUpstream) {
 			return legacyUpstream
 		}
@@ -83,6 +113,100 @@ func ForwardCursor(w http.ResponseWriter, req *Request) error {
 	}
 
 	return executeCursorLegacy(w, req, bodyMap, accessToken, machineID, ghostMode)
+}
+
+// translatingWriter is the http.ResponseWriter handed to the Cursor executors
+// when the client speaks a different wire format than OpenAI Chat Completions.
+//
+// The executors write OpenAI SSE into this writer as usual; the first byte
+// starts a goroutine that reads the same bytes back out of an io.Pipe and
+// pushes them through execSSEStream, which performs the Claude Messages or
+// Responses translation and owns the real client writer. Header and Flush are
+// therefore no-ops here — the translation goroutine is what talks to w.
+type translatingWriter struct {
+	w       http.ResponseWriter
+	req     *Request
+	header  http.Header
+	started bool
+	pr      *io.PipeReader
+	pw      *io.PipeWriter
+	errCh   chan error
+	closed  bool
+	mu      sync.Mutex
+}
+
+func newTranslatingWriter(w http.ResponseWriter, req *Request) *translatingWriter {
+	return &translatingWriter{
+		w:      w,
+		req:    req,
+		header: make(http.Header),
+	}
+}
+
+func (t *translatingWriter) Header() http.Header {
+	return t.header
+}
+
+// Write starts the translation goroutine on the first call. Nothing reaches the
+// client until then, so a pre-commit upstream failure can still be reported to
+// the caller instead of a committed, empty response.
+func (t *translatingWriter) Write(b []byte) (int, error) {
+	t.mu.Lock()
+	if t.closed {
+		t.mu.Unlock()
+		return 0, io.ErrClosedPipe
+	}
+	if !t.started {
+		t.started = true
+		t.pr, t.pw = io.Pipe()
+		t.errCh = make(chan error, 1)
+		go func() {
+			t.errCh <- execSSEStream(t.w, t.pr, t.req)
+		}()
+	}
+	pw := t.pw
+	t.mu.Unlock()
+	return pw.Write(b)
+}
+
+// WriteHeader is a no-op: the status is chosen by the translation goroutine
+// once it has a first byte to translate.
+func (t *translatingWriter) WriteHeader(code int) {}
+
+// Flush is a no-op for the same reason as WriteHeader.
+func (t *translatingWriter) Flush() {}
+
+// IsCommitted reports whether the client response can no longer be replaced.
+// Once the translator has started, its own headers are already out.
+func (t *translatingWriter) IsCommitted() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.started {
+		return true
+	}
+	if cw, ok := t.w.(interface{ IsCommitted() bool }); ok {
+		return cw.IsCommitted()
+	}
+	return false
+}
+
+// Close ends the stream and returns the translation error, if any. It is
+// idempotent: closing an unstarted writer is a no-op, and a second Close returns
+// the already-collected result instead of blocking on an empty channel.
+func (t *translatingWriter) Close() error {
+	t.mu.Lock()
+	if t.closed || !t.started {
+		t.closed = true
+		t.mu.Unlock()
+		return nil
+	}
+	t.closed = true
+	pw := t.pw
+	errCh := t.errCh
+	t.mu.Unlock()
+
+	_ = pw.Close()
+	return <-errCh
 }
 
 // cursorRecorderWriter mirrors everything written to the client into
@@ -164,38 +288,6 @@ func asUpstreamError(err error) *proxy.UpstreamError {
 	return nil
 }
 
-// clientProxyFor reports the proxy the request client would use for target, or
-// nil for a direct connection. It inspects the transports the chat handler
-// builds (a bare *http.Transport, possibly wrapped in FallbackTransport) so the
-// decision is made from the resolved client rather than from connection config.
-func clientProxyFor(client *http.Client, target string) *url.URL {
-	if client == nil {
-		return nil
-	}
-	rt := client.Transport
-	for {
-		switch t := rt.(type) {
-		case *proxy.FallbackTransport:
-			rt = t.Base
-		case *http.Transport:
-			if t.Proxy == nil {
-				return nil
-			}
-			probe, err := http.NewRequest(http.MethodPost, target, nil)
-			if err != nil {
-				return nil
-			}
-			proxyURL, err := t.Proxy(probe)
-			if err != nil {
-				return nil
-			}
-			return proxyURL
-		default:
-			return nil
-		}
-	}
-}
-
 // cursorErrorBody renders the OpenAI-shaped error payload for a Cursor upstream
 // failure. Fallback treats a returned error as a failed attempt, so the body
 // only describes the failure to the caller; nothing is written to w.
@@ -214,6 +306,10 @@ func cursorErrorBody(message, errType string) []byte {
 }
 
 func writeSSEChunk(w http.ResponseWriter, flusher http.Flusher, id string, created int64, model, content string, toolCalls []map[string]any, finishReason string) {
+	writeSSEChunkWithUsage(w, flusher, id, created, model, content, toolCalls, finishReason, nil)
+}
+
+func writeSSEChunkWithUsage(w http.ResponseWriter, flusher http.Flusher, id string, created int64, model, content string, toolCalls []map[string]any, finishReason string, usage map[string]any) {
 	delta := map[string]any{}
 	if content != "" {
 		delta["content"] = content
@@ -236,6 +332,9 @@ func writeSSEChunk(w http.ResponseWriter, flusher http.Flusher, id string, creat
 	}
 	if finishReason != "" {
 		chunk["choices"].([]map[string]any)[0]["finish_reason"] = finishReason
+	}
+	if usage != nil {
+		chunk["usage"] = usage
 	}
 
 	b, _ := json.Marshal(chunk)

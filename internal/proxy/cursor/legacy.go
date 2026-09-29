@@ -1,13 +1,10 @@
 package cursor
 
 import (
-	"encoding/json"
 	"fmt"
 	"runtime"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // Legacy schema field constants (matching upstream open-sse/utils/cursorProtobuf.js)
@@ -93,11 +90,21 @@ const (
 	FieldCV2CToolIndex   = 48
 	FieldCV2CModelCallID = 49
 
-	// MCP Params nested
-	FieldMCPToolName   = 1
-	FieldMCPToolParams = 2
-	FieldMCPToolServer = 3
+	// McpParams nested (name / raw args / server)
+	FieldMCPParamsName    = 1
+	FieldMCPParamsRawArgs = 2
+	FieldMCPParamsServer  = 3
+
+	// MCP tool declaration, matching upstream encodeMcpTool's field order.
+	FieldMcpDeclName   = 1
+	FieldMcpDeclDesc   = 2
+	FieldMcpDeclSchema = 3
+	FieldMcpDeclServer = 4
 )
+
+// SystemInstructionPrefix marks a system message that travelled as a user
+// bubble, matching upstream's openai-to-cursor convertMessages.
+const SystemInstructionPrefix = "[System Instructions]\n"
 
 // LegacyToolCall holds tool call extracted from ChatService response.
 type LegacyToolCall struct {
@@ -109,10 +116,11 @@ type LegacyToolCall struct {
 
 // LegacyResponseFrame holds parsed content from ChatService response frame.
 type LegacyResponseFrame struct {
-	Text     string
-	Thinking string
-	ToolCall *LegacyToolCall
-	Error    string
+	Text      string
+	Thinking  string
+	ToolCall  *LegacyToolCall
+	Error     string
+	ErrorCode string
 }
 
 func parseToolID(id string) (toolCallID string, modelCallID string) {
@@ -184,9 +192,9 @@ func encodeClientSideToolV2Result(toolCallID, modelCallID, selectedTool, resultC
 
 func encodeMcpParamsForCall(toolName, rawArgs, serverName string) []byte {
 	tool := ConcatBuffers(
-		EncodeField(FieldMCPToolName, WireBytes, toolName),
-		EncodeField(FieldMCPToolParams, WireBytes, rawArgs),
-		EncodeField(FieldMCPToolServer, WireBytes, serverName),
+		EncodeField(FieldMCPParamsName, WireBytes, toolName),
+		EncodeField(FieldMCPParamsRawArgs, WireBytes, rawArgs),
+		EncodeField(FieldMCPParamsServer, WireBytes, serverName),
 	)
 	return EncodeField(FieldLegacyMCPToolsList, WireBytes, tool)
 }
@@ -271,19 +279,27 @@ func EncodeLegacyCursorSetting() []byte {
 // EncodeLegacyMetadata encodes real Metadata field (26).
 func EncodeLegacyMetadata() []byte {
 	plat := runtime.GOOS
-	if plat == "" {
+	switch plat {
+	case "windows":
+		plat = "win32"
+	case "darwin", "linux":
+		// already matches Node process.platform
+	default:
 		plat = "linux"
 	}
 	arch := runtime.GOARCH
-	if arch == "amd64" {
+	switch arch {
+	case "amd64":
 		arch = "x64"
+	case "386":
+		arch = "ia32"
 	}
 	return EncodeField(FieldLegacyMetadata, WireBytes, ConcatBuffers(
 		EncodeField(1, WireBytes, plat),
 		EncodeField(2, WireBytes, arch),
 		EncodeField(3, WireBytes, "v20.0.0"),
 		EncodeField(4, WireBytes, "/"),
-		EncodeField(5, WireBytes, time.Now().UTC().Format(time.RFC3339)),
+		EncodeField(5, WireBytes, time.Now().UTC().Format("2006-01-02T15:04:05.000Z")),
 	))
 }
 
@@ -311,302 +327,4 @@ func EncodeLegacyMessage(content string, role int, msgID string, hasTools bool, 
 		parts = append(parts, EncodeField(FieldLegacyMsgSupportedTools, WireBytes, EncodeVarint(1)))
 	}
 	return EncodeField(FieldLegacyMessages, WireBytes, ConcatBuffers(parts...))
-}
-
-// GenerateLegacyCursorBody builds the Connect-RPC frame with complete upstream fields.
-func GenerateLegacyCursorBody(messages []any, modelName string, tools []any, reasoningEffort string, forceAgentMode bool) []byte {
-	hasTools := len(tools) > 0
-	isAgentic := hasTools || forceAgentMode
-	unifiedMode := 1 // CHAT
-	unifiedModeName := "Ask"
-	if isAgentic {
-		unifiedMode = 2 // AGENT
-		unifiedModeName = "Agent"
-	}
-
-	thinkingLevel := 0
-	switch strings.ToLower(reasoningEffort) {
-	case "medium":
-		thinkingLevel = 1
-	case "high", "max":
-		thinkingLevel = 2
-	}
-
-	convID := uuid.New().String()
-	var encodedMsgs [][]byte
-	var msgIDParts [][]byte
-
-	// Pre-scan assistant tool_calls so a role:"tool" follow-up can be encoded
-	// through EncodeToolResult: an OpenAI tool message carries only
-	// tool_call_id, while the Cursor ClientSideToolV2Result also needs the tool
-	// name and arguments from the call it answers.
-	type toolCallMeta struct{ name, arguments string }
-	callMeta := make(map[string]toolCallMeta)
-	for _, m := range messages {
-		mMap, ok := m.(map[string]any)
-		if !ok {
-			continue
-		}
-		if roleStr, _ := mMap["role"].(string); roleStr != "assistant" {
-			continue
-		}
-		tcs, ok := mMap["tool_calls"].([]any)
-		if !ok {
-			continue
-		}
-		for _, tc := range tcs {
-			tcMap, ok := tc.(map[string]any)
-			if !ok {
-				continue
-			}
-			id, _ := tcMap["id"].(string)
-			if id == "" {
-				continue
-			}
-			meta := toolCallMeta{}
-			if fn, ok := tcMap["function"].(map[string]any); ok {
-				meta.name, _ = fn["name"].(string)
-				meta.arguments, _ = fn["arguments"].(string)
-			}
-			callMeta[id] = meta
-		}
-	}
-
-	for i, m := range messages {
-		mMap, ok := m.(map[string]any)
-		if !ok {
-			continue
-		}
-		roleStr, _ := mMap["role"].(string)
-		content := TextFromContent(mMap["content"])
-		role := 1 // USER
-		if roleStr == "assistant" {
-			role = 2
-		}
-
-		var toolResults []map[string]any
-		if trs, ok := mMap["tool_results"].([]any); ok {
-			for _, tr := range trs {
-				if trm, ok := tr.(map[string]any); ok {
-					toolResults = append(toolResults, trm)
-				}
-			}
-		}
-
-		// An OpenAI tool follow-up is a real tool result, not just user text:
-		// encode it through EncodeToolResult so Cursor receives a
-		// ClientSideToolV2Result/ClientSideToolV2Call pair for the call it
-		// answers. The textual content is kept as well, so the model still sees
-		// the result if the tool result fields are ignored.
-		//
-		// Deliberate divergence from upstream: this leaves the result on the
-		// USER-role message that carries the tool result, whereas upstream's
-		// encodeRequest() maps every non-"user" role to ASSISTANT and attaches
-		// tool_results to the assistant bubble that made the call. If Cursor ever
-		// validates result ownership against assistant bubbles, the carrier role
-		// here is the first thing to change.
-		if roleStr == "tool" {
-			callID, _ := mMap["tool_call_id"].(string)
-			meta := callMeta[callID]
-			name, _ := mMap["name"].(string)
-			if name == "" {
-				name = meta.name
-			}
-			args := meta.arguments
-			if args == "" {
-				args = "{}"
-			}
-			toolResults = append(toolResults, map[string]any{
-				"tool_call_id":   callID,
-				"tool_name":      name,
-				"raw_args":       args,
-				"result_content": content,
-			})
-		}
-
-		msgID := uuid.New().String()
-		isLast := i == len(messages)-1
-		encodedMsgs = append(encodedMsgs, EncodeLegacyMessage(content, role, msgID, isAgentic, isLast, toolResults))
-
-		idEntry := ConcatBuffers(
-			EncodeField(1, WireBytes, msgID),
-			EncodeField(3, WireVarint, role),
-		)
-		msgIDParts = append(msgIDParts, EncodeField(FieldLegacyMessageIDs, WireBytes, idEntry))
-	}
-
-	var reqParts [][]byte
-	reqParts = append(reqParts, encodedMsgs...)
-	reqParts = append(reqParts, EncodeField(FieldLegacyUnknown2, WireVarint, 1))
-	reqParts = append(reqParts, EncodeField(FieldLegacyInstruction, WireBytes, []byte{}))
-	reqParts = append(reqParts, EncodeField(FieldLegacyUnknown4, WireVarint, 1))
-	reqParts = append(reqParts, EncodeLegacyModel(modelName))
-	reqParts = append(reqParts, EncodeField(FieldLegacyWebTool, WireBytes, []byte{}))
-	reqParts = append(reqParts, EncodeField(FieldLegacyUnknown13, WireVarint, 1))
-	reqParts = append(reqParts, EncodeLegacyCursorSetting())
-	reqParts = append(reqParts, EncodeField(FieldLegacyUnknown19, WireVarint, 1))
-	reqParts = append(reqParts, EncodeField(FieldLegacyConversationID, WireBytes, convID))
-	reqParts = append(reqParts, EncodeLegacyMetadata())
-	agenticVal := 0
-	if isAgentic {
-		agenticVal = 1
-	}
-	reqParts = append(reqParts, EncodeField(FieldLegacyIsAgentic, WireVarint, agenticVal))
-	if isAgentic {
-		reqParts = append(reqParts, EncodeField(FieldLegacySupportedTools, WireBytes, EncodeVarint(1)))
-	}
-	if len(msgIDParts) > 0 {
-		reqParts = append(reqParts, msgIDParts...)
-	}
-
-	// MCP Tools
-	for _, t := range tools {
-		tMap, ok := t.(map[string]any)
-		if !ok {
-			continue
-		}
-		tName := ""
-		tDesc := ""
-		var tSchema any = map[string]any{}
-		if fn, ok := tMap["function"].(map[string]any); ok {
-			if n, ok := fn["name"].(string); ok {
-				tName = n
-			}
-			if d, ok := fn["description"].(string); ok {
-				tDesc = d
-			}
-			if s, ok := fn["parameters"]; ok {
-				tSchema = s
-			}
-		} else {
-			if n, ok := tMap["name"].(string); ok {
-				tName = n
-			}
-			if d, ok := tMap["description"].(string); ok {
-				tDesc = d
-			}
-			if s, ok := tMap["parameters"]; ok {
-				tSchema = s
-			}
-		}
-		schemaBytes, _ := json.Marshal(tSchema)
-		mcpPart := ConcatBuffers(
-			EncodeField(1, WireBytes, tName),
-			EncodeField(2, WireBytes, tDesc),
-			EncodeField(3, WireBytes, string(schemaBytes)),
-			EncodeField(4, WireBytes, "custom"),
-		)
-		reqParts = append(reqParts, EncodeField(FieldLegacyMcpTools, WireBytes, mcpPart))
-	}
-
-	disableTools := 1
-	if isAgentic {
-		disableTools = 0
-	}
-
-	reqParts = append(reqParts, EncodeField(FieldLegacyLargeContext, WireVarint, 0))
-	reqParts = append(reqParts, EncodeField(FieldLegacyUnknown38, WireVarint, 0))
-	reqParts = append(reqParts, EncodeField(FieldLegacyUnifiedMode, WireVarint, unifiedMode))
-	reqParts = append(reqParts, EncodeField(FieldLegacyUnknown47, WireBytes, []byte{}))
-	reqParts = append(reqParts, EncodeField(FieldLegacyShouldDisableTools, WireVarint, disableTools))
-	reqParts = append(reqParts, EncodeField(FieldLegacyThinkingLevel, WireVarint, thinkingLevel))
-	reqParts = append(reqParts, EncodeField(FieldLegacyUnknown51, WireVarint, 0))
-	reqParts = append(reqParts, EncodeField(FieldLegacyUnknown53, WireVarint, 1))
-	reqParts = append(reqParts, EncodeField(FieldLegacyUnifiedModeName, WireBytes, unifiedModeName))
-
-	requestEnvelope := EncodeField(FieldLegacyRequest, WireBytes, ConcatBuffers(reqParts...))
-	return WrapConnectRPCFrame(requestEnvelope)
-}
-
-// ExtractLegacyResponse parses a StreamUnifiedChatResponse frame payload with correct field IDs.
-func ExtractLegacyResponse(payload []byte) LegacyResponseFrame {
-	var res LegacyResponseFrame
-	if len(payload) > 10 && payload[0] == '{' && strings.Contains(string(payload), "\"error\"") {
-		var errMap map[string]any
-		if err := json.Unmarshal(payload, &errMap); err == nil {
-			if e, ok := errMap["error"].(map[string]any); ok {
-				if msg, ok := e["message"].(string); ok {
-					res.Error = msg
-					return res
-				}
-			}
-		}
-		res.Error = string(payload)
-		return res
-	}
-
-	fields := DecodeMessage(payload)
-
-	// Field 1: ClientSideToolV2Call
-	if fields.Has(FieldLegacyToolCall) {
-		tcMsg := DecodeMessage(fields.Get(FieldLegacyToolCall)[0].Value)
-		id := ""
-		name := ""
-		rawArgs := ""
-		isLast := false
-
-		// Field 3: TOOL_ID
-		if tcMsg.Has(FieldLegacyToolID) {
-			fullID := string(tcMsg.Get(FieldLegacyToolID)[0].Value)
-			id = strings.Split(fullID, "\n")[0]
-		}
-		// Field 9: TOOL_NAME
-		if tcMsg.Has(FieldLegacyToolName) {
-			name = string(tcMsg.Get(FieldLegacyToolName)[0].Value)
-		}
-		// Field 11: TOOL_IS_LAST or Field 15: TOOL_IS_LAST_ALT
-		if tcMsg.Has(FieldLegacyToolIsLast) {
-			isLast = tcMsg.Get(FieldLegacyToolIsLast)[0].Varint != 0
-		} else if tcMsg.Has(FieldLegacyToolIsLastAlt) {
-			isLast = tcMsg.Get(FieldLegacyToolIsLastAlt)[0].Varint != 0
-		}
-
-		// Field 27: TOOL_MCP_PARAMS
-		if tcMsg.Has(FieldLegacyToolMCPParams) {
-			mcpMsg := DecodeMessage(tcMsg.Get(FieldLegacyToolMCPParams)[0].Value)
-			if mcpMsg.Has(FieldLegacyMCPToolsList) {
-				tMsg := DecodeMessage(mcpMsg.Get(FieldLegacyMCPToolsList)[0].Value)
-				if tMsg.Has(FieldLegacyMCPNestedName) {
-					name = string(tMsg.Get(FieldLegacyMCPNestedName)[0].Value)
-				}
-				if tMsg.Has(FieldLegacyMCPNestedParams) {
-					rawArgs = string(tMsg.Get(FieldLegacyMCPNestedParams)[0].Value)
-				}
-			}
-		}
-
-		// Field 10: TOOL_RAW_ARGS
-		if rawArgs == "" && tcMsg.Has(FieldLegacyToolRawArgs) {
-			rawArgs = string(tcMsg.Get(FieldLegacyToolRawArgs)[0].Value)
-		}
-
-		if id != "" && name != "" {
-			if rawArgs == "" {
-				rawArgs = "{}"
-			}
-			res.ToolCall = &LegacyToolCall{
-				ID:        id,
-				Name:      name,
-				Arguments: rawArgs,
-				IsLast:    isLast,
-			}
-			return res
-		}
-	}
-
-	// Field 2: StreamUnifiedChatResponse
-	if fields.Has(FieldLegacyResponse) {
-		respMsg := DecodeMessage(fields.Get(FieldLegacyResponse)[0].Value)
-		if respMsg.Has(FieldLegacyResponseText) {
-			res.Text = string(respMsg.Get(FieldLegacyResponseText)[0].Value)
-		}
-		if respMsg.Has(FieldLegacyThinking) {
-			thMsg := DecodeMessage(respMsg.Get(FieldLegacyThinking)[0].Value)
-			if thMsg.Has(FieldLegacyThinkingText) {
-				res.Thinking = string(thMsg.Get(FieldLegacyThinkingText)[0].Value)
-			}
-		}
-	}
-
-	return res
 }

@@ -18,7 +18,7 @@ func TestHandleGetConnectionModels_Cursor(t *testing.T) {
 
 	// Mock offline fetch
 	origFetch := cursorpkg.FetchCursorProtoFunc
-	cursorpkg.FetchCursorProtoFunc = func(ctx context.Context, endpointURL string, headers map[string]string) ([]byte, error) {
+	cursorpkg.FetchCursorProtoFunc = func(ctx context.Context, endpointURL string, headers map[string]string, _ *http.Client) ([]byte, error) {
 		m := cursorpkg.ConcatBuffers(
 			cursorpkg.EncodeField(1, cursorpkg.WireBytes, "cursor-pro-test"),
 			cursorpkg.EncodeField(4, cursorpkg.WireBytes, "Cursor Pro Test"),
@@ -61,5 +61,46 @@ func TestHandleGetConnectionModels_Cursor(t *testing.T) {
 	}
 	if resp.Models[0].ID != "cursor-pro-test" {
 		t.Errorf("expected cursor-pro-test, got %s", resp.Models[0].ID)
+	}
+}
+
+func TestHandleGetConnectionModels_Cursor_MissingMachineId(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	cursorpkg.ClearCursorModelCache()
+	defer cursorpkg.ClearCursorModelCache()
+
+	connData := `{"accessToken":"test-tok"}`
+	if err := repo.CreateProviderConnectionFull("conn-cursor-nomachine", "cursor", "oauth", "Cursor No Machine", nil, connData); err != nil {
+		t.Fatalf("create conn: %v", err)
+	}
+
+	router := setupTestRouter(repo)
+	req := httptest.NewRequest(http.MethodGet, "/api/providers/conn-cursor-nomachine/models", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Provider string `json:"provider"`
+		Warning  string `json:"warning"`
+		Models   []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if resp.Provider != "cursor" || len(resp.Models) == 0 {
+		t.Fatalf("expected fallback static models, got: %+v", resp)
+	}
+	if resp.Warning == "" {
+		t.Errorf("expected warning in response when falling back to static catalog")
 	}
 }

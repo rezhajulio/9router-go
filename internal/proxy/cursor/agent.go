@@ -152,10 +152,15 @@ func BuildAgentRunFrame(messages []any, model string, tools []any) []byte {
 	var current map[string]any
 	var historyMessages []map[string]any
 	if n := len(chatMessages); n > 0 {
-		current = chatMessages[n-1]
-		historyMessages = chatMessages[:n-1]
+		last := chatMessages[n-1]
+		if last["role"] == "assistant" {
+			historyMessages = chatMessages
+			current = nil
+		} else {
+			current = last
+			historyMessages = chatMessages[:n-1]
+		}
 	}
-
 	var history [][]byte
 	for _, h := range historyMessages {
 		if enc := EncodeHistoryMessage(h); len(enc) > 0 {

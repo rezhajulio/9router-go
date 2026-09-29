@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -255,6 +256,74 @@ func TestHandleModels_LiveCatalogCoalescesConcurrentRequests(t *testing.T) {
 	}
 	if n := hits.Load(); n != 1 {
 		t.Errorf("expected exactly 1 upstream fetch for %d concurrent callers, got %d", callers, n)
+	}
+}
+
+// A waiter must not inherit the first caller's cancellation. The fetch is
+// shared through singleflight, so if the triggering caller's context aborted
+// the upstream request, a still-connected client racing the same cold cache
+// would be served the static fallback instead of the live catalog.
+func TestHandleModels_LiveCatalogCancelledWaiterDoesNotPoisonFlight(t *testing.T) {
+	resetLiveCatalog(t)
+
+	fetched := make(chan struct{})
+	release := make(chan struct{})
+	var once atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if once.CompareAndSwap(false, true) {
+			close(fetched)
+		}
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"models":[{"modelId":"auto"}]}`))
+	}))
+	defer srv.Close()
+	kiroCatalogBaseURL = srv.URL + "/%s"
+
+	database, cleanup := setupChatTestDB(t)
+	defer cleanup()
+	if _, err := database.Exec(`DELETE FROM providerConnections`); err != nil {
+		t.Fatalf("delete connections: %v", err)
+	}
+	if _, err := database.Exec(`DELETE FROM kv WHERE scope='customModels'`); err != nil {
+		t.Fatalf("delete customs: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO providerConnections (id, provider, authType, name, priority, isActive, data, createdAt, updatedAt) VALUES
+		('conn-kiro-cancel', 'kiro', 'oauth', 'Kiro Cancel', 1, 1, '{"accessToken":"ya29.cancel"}', '2026-07-18T00:00:00Z', '2026-07-18T00:00:00Z')`); err != nil {
+		t.Fatalf("seed kiro: %v", err)
+	}
+
+	h := NewChatHandler(db.NewRepo(database))
+	h.Client = srv.Client()
+
+	// Caller A starts the fetch and then goes away mid-flight.
+	ctxA, cancelA := context.WithCancel(context.Background())
+	defer cancelA()
+	go func() {
+		req := httptest.NewRequest("GET", "/v1/models", nil).WithContext(ctxA)
+		h.HandleModels(httptest.NewRecorder(), req)
+	}()
+	<-fetched
+
+	// Caller B joins the in-flight fetch while its own client is still there.
+	idsB := make(chan []string, 1)
+	go func() {
+		req := httptest.NewRequest("GET", "/v1/models", nil)
+		rec := httptest.NewRecorder()
+		h.HandleModels(rec, req)
+		idsB <- modelsIDsFromBody(rec.Body.Bytes())
+	}()
+	time.Sleep(100 * time.Millisecond) // let B join the flight
+	cancelA()
+	close(release)
+
+	select {
+	case got := <-idsB:
+		if !strings.Contains(strings.Join(got, "\n"), "kr/auto") {
+			t.Fatalf("connected waiter did not receive the live catalog after the first caller cancelled: %v", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("waiter never returned")
 	}
 }
 

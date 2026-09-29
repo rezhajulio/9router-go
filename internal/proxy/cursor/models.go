@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -39,8 +38,12 @@ const (
 	maxCatalogCacheEntries = 128
 )
 
-// FetchCursorProtoFunc allows mocking H2 proto fetch in tests.
-var FetchCursorProtoFunc = fetchCursorProtoH2
+// FetchCursorProtoFunc allows mocking H2 proto fetch in tests. The client
+// carries the connection's proxy routing, so the real implementation is handed
+// it rather than dialing around a configured proxy pool.
+var FetchCursorProtoFunc = func(ctx context.Context, endpointURL string, headers map[string]string, client *http.Client) ([]byte, error) {
+	return fetchCursorProtoH2(ctx, endpointURL, headers, client)
+}
 
 // ModelEntry represents a single discovered Cursor model.
 type ModelEntry struct {
@@ -97,6 +100,19 @@ func writeCatalogCache(key string, ttl time.Duration, models []ModelEntry) {
 	catalogCache[key] = cachedCatalog{expiresAt: now.Add(ttl), models: models}
 }
 
+func writeNegativeCatalogCache(key string, ttl time.Duration) {
+	now := time.Now()
+	catalogCacheMu.Lock()
+	defer catalogCacheMu.Unlock()
+	if c, ok := catalogCache[key]; ok && c.expiresAt.After(now) && len(c.models) > 0 {
+		return // keep valid unexpired positive cache on transient failure
+	}
+	if _, exists := catalogCache[key]; !exists && len(catalogCache) >= maxCatalogCacheEntries {
+		evictCatalogCacheLocked(now)
+	}
+	catalogCache[key] = cachedCatalog{expiresAt: now.Add(ttl), models: nil}
+}
+
 // evictCatalogCacheLocked drops expired entries and then arbitrary ones until
 // the cache is under its cap (the same "hot or dead, never warm" reasoning as
 // the rotating-proxy client cache). Caller holds catalogCacheMu.
@@ -140,13 +156,19 @@ func ParseCursorUsableModels(payload []byte) []ModelEntry {
 		seen[id] = true
 
 		name := ""
-		if detail.Has(4) {
-			name = strings.TrimSpace(string(detail.Get(4)[0].Value))
-		} else if detail.Has(5) {
-			name = strings.TrimSpace(string(detail.Get(5)[0].Value))
-		} else if detail.Has(3) {
-			name = strings.TrimSpace(string(detail.Get(3)[0].Value))
-		} else {
+		for _, f := range []int{4, 5, 3} {
+			if detail.Has(f) {
+				vals := detail.Get(f)
+				if len(vals) > 0 && vals[0].WireType == WireBytes && len(vals[0].Value) > 0 {
+					trimmed := strings.TrimSpace(string(vals[0].Value))
+					if trimmed != "" {
+						name = trimmed
+						break
+					}
+				}
+			}
+		}
+		if name == "" {
 			name = id
 		}
 
@@ -161,7 +183,10 @@ func ParseCursorUsableModels(payload []byte) []ModelEntry {
 
 // ResolveCursorModels fetches live usable models for the given credentials.
 // Unary GetUsableModels on agent.api5.cursor.sh is HTTP/2 only with content-type: application/proto.
-func ResolveCursorModels(ctx context.Context, accessToken, machineID string, ghostMode bool, forceRefresh bool) ([]ModelEntry, error) {
+//
+// client is the connection's resolved client, so discovery routes through the
+// same proxy pool the chat path uses; nil dials directly.
+func ResolveCursorModels(ctx context.Context, client *http.Client, accessToken, machineID string, ghostMode bool, forceRefresh bool) ([]ModelEntry, error) {
 	if accessToken == "" || machineID == "" {
 		return nil, nil
 	}
@@ -192,7 +217,7 @@ func ResolveCursorModels(ctx context.Context, accessToken, machineID string, gho
 	result := modelsFlight.DoChan(flightKey, func() (any, error) {
 		fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cursorModelsFetchTimeout)
 		defer cancel()
-		return fetchCursorModels(fetchCtx, key, accessToken, machineID, ghostMode)
+		return fetchCursorModels(fetchCtx, client, key, accessToken, machineID, ghostMode)
 	})
 
 	select {
@@ -212,19 +237,18 @@ func ResolveCursorModels(ctx context.Context, accessToken, machineID string, gho
 // fetchCursorModels performs the GetUsableModels call and updates the cache,
 // including the short negative cache that stops a failing connection from
 // hammering upstream on every /v1/models call.
-func fetchCursorModels(ctx context.Context, key, accessToken, machineID string, ghostMode bool) ([]ModelEntry, error) {
+func fetchCursorModels(ctx context.Context, client *http.Client, key, accessToken, machineID string, ghostMode bool) ([]ModelEntry, error) {
 	headers := BuildCursorHeaders(accessToken, machineID, ghostMode)
 	headers["accept"] = "application/proto"
 	headers["content-type"] = "application/proto"
 	delete(headers, "connect-accept-encoding")
 	delete(headers, "connect-protocol-version")
 
-	payload, err := FetchCursorProtoFunc(ctx, cursorModelsURL, headers)
+	payload, err := FetchCursorProtoFunc(ctx, cursorModelsURL, headers, client)
 	if err != nil {
-		writeCatalogCache(key, negativeCacheTTL, nil)
+		writeNegativeCatalogCache(key, negativeCacheTTL)
 		return nil, err
 	}
-
 	models := ParseCursorUsableModels(payload)
 	if len(models) == 0 {
 		return nil, nil
@@ -233,7 +257,7 @@ func fetchCursorModels(ctx context.Context, key, accessToken, machineID string, 
 	return models, nil
 }
 
-func fetchCursorProtoH2(ctx context.Context, endpointURL string, headers map[string]string) ([]byte, error) {
+func fetchCursorProtoH2(ctx context.Context, endpointURL string, headers map[string]string, client *http.Client) ([]byte, error) {
 	u, err := url.Parse(endpointURL)
 	if err != nil {
 		return nil, err
@@ -245,10 +269,10 @@ func fetchCursorProtoH2(ctx context.Context, endpointURL string, headers map[str
 		port = "443"
 	}
 
-	rawConn, err := dialCursorTLS(ctx, net.JoinHostPort(host, port), &tls.Config{
+	rawConn, err := DialH2(ctx, client, host, port, &tls.Config{
 		ServerName: host,
 		NextProtos: []string{"h2"},
-	})
+	}, cursorModelsDialTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("tls dial failed: %w", err)
 	}
@@ -279,22 +303,5 @@ func fetchCursorProtoH2(ctx context.Context, endpointURL string, headers map[str
 		return nil, fmt.Errorf("status %d", resp.StatusCode)
 	}
 
-	return io.ReadAll(resp.Body)
-}
-
-// dialCursorTLS connects and completes the TLS handshake. net.Dialer with
-// tls.DialWithDialer ignores the caller's context entirely, which made a 3s
-// /v1/models budget wait on the full 10s dial instead.
-func dialCursorTLS(ctx context.Context, addr string, tlsConfig *tls.Config) (net.Conn, error) {
-	d := &net.Dialer{Timeout: cursorModelsDialTimeout}
-	conn, err := d.DialContext(ctx, "tcp", addr)
-	if err != nil {
-		return nil, err
-	}
-	tlsConn := tls.Client(conn, tlsConfig)
-	if err := tlsConn.HandshakeContext(ctx); err != nil {
-		_ = conn.Close()
-		return nil, err
-	}
-	return tlsConn, nil
+	return io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 }

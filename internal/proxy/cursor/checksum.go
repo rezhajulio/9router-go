@@ -4,11 +4,27 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+var cursorTimezone = sync.OnceValue(func() string {
+	if tz := strings.TrimPrefix(os.Getenv("TZ"), ":"); tz != "" {
+		return tz
+	}
+	if p, err := filepath.EvalSymlinks("/etc/localtime"); err == nil {
+		if _, name, ok := strings.Cut(p, "zoneinfo/"); ok {
+			return name
+		}
+	}
+	return "UTC"
+})
 
 // GenerateHashed64Hex returns SHA-256 hex digest of input + salt.
 func GenerateHashed64Hex(input, salt string) string {
@@ -24,15 +40,21 @@ func GenerateSessionID(authToken string) string {
 // GenerateCursorChecksum generates the Jyh cipher checksum header.
 // Format: {base64_url_encoded}{machineId}
 func GenerateCursorChecksum(machineID string) string {
-	timestamp := time.Now().UnixMilli() / 1000000 // Math.floor(Date.now() / 1e6)
+	return cursorChecksumAt(time.Now().UnixMilli()/1000000, machineID)
+}
 
+func cursorChecksumAt(timestamp int64, machineID string) string {
+	// JavaScript bitwise operators convert operands to 32-bit signed integers
+	// and mask shift amounts to 5 bits (shift mod 32), so (ts >> 40) is
+	// (int32(ts) >> 8) and (ts >> 32) is (int32(ts) >> 0).
+	ts := int32(timestamp)
 	byteArray := []byte{
-		byte((timestamp >> 40) & 0xFF),
-		byte((timestamp >> 32) & 0xFF),
-		byte((timestamp >> 24) & 0xFF),
-		byte((timestamp >> 16) & 0xFF),
-		byte((timestamp >> 8) & 0xFF),
-		byte(timestamp & 0xFF),
+		byte((ts >> 8) & 0xFF),
+		byte(ts & 0xFF),
+		byte((ts >> 24) & 0xFF),
+		byte((ts >> 16) & 0xFF),
+		byte((ts >> 8) & 0xFF),
+		byte(ts & 0xFF),
 	}
 
 	var t byte = 165
@@ -71,13 +93,8 @@ func GenerateCursorChecksum(machineID string) string {
 // BuildCursorHeaders creates all required Cursor API HTTP headers.
 func BuildCursorHeaders(accessToken, machineID string, ghostMode bool) map[string]string {
 	cleanToken := accessToken
-	if idx := len("::"); len(accessToken) > idx {
-		for i := 0; i < len(accessToken)-1; i++ {
-			if accessToken[i] == ':' && accessToken[i+1] == ':' {
-				cleanToken = accessToken[i+2:]
-				break
-			}
-		}
+	if _, after, ok := strings.Cut(accessToken, "::"); ok {
+		cleanToken, _, _ = strings.Cut(after, "::")
 	}
 
 	effectiveMachineID := machineID
@@ -106,10 +123,7 @@ func BuildCursorHeaders(accessToken, machineID string, ghostMode bool) map[strin
 		ghostVal = "false"
 	}
 
-	tz, _ := time.Now().Zone()
-	if tz == "" {
-		tz = "UTC"
-	}
+	tz := cursorTimezone()
 
 	return map[string]string{
 		"authorization":               "Bearer " + cleanToken,

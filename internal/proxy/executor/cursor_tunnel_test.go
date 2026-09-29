@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"9router/proxy/internal/proxy"
+
 	"golang.org/x/net/http2"
 )
 
@@ -162,8 +164,8 @@ func TestDialCursorH2RejectsNonHTTPProxyScheme(t *testing.T) {
 	}
 	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)}}
 
-	_, err = dialCursorH2(context.Background(), client, "agent.api5.cursor.sh", "443", &tls.Config{
-		ServerName: "agent.api5.cursor.sh",
+	_, err = dialCursorH2(context.Background(), client, "127.0.0.1", "443", &tls.Config{
+		ServerName: "localhost",
 		NextProtos: []string{"h2"},
 	})
 	if err == nil {
@@ -171,5 +173,98 @@ func TestDialCursorH2RejectsNonHTTPProxyScheme(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unsupported proxy scheme") {
 		t.Fatalf("expected an unsupported scheme error, got %v", err)
+	}
+}
+
+// newRefusingProxy starts a proxy that answers every CONNECT with 403, the shape
+// an allowlisting sandbox proxy uses, and returns its URL.
+func newRefusingProxy(t *testing.T) *url.URL {
+	t.Helper()
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "blocked-by-allowlist", http.StatusForbidden)
+	}))
+	t.Cleanup(proxy.Close)
+	proxyURL, err := url.Parse(proxy.URL)
+	if err != nil {
+		t.Fatalf("parse proxy url: %v", err)
+	}
+	return proxyURL
+}
+
+// newH2Target starts an h2-over-TLS server that echoes a fixed body and returns
+// its parsed URL.
+func newH2Target(t *testing.T, body string) *url.URL {
+	t.Helper()
+	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, body)
+	}))
+	target.EnableHTTP2 = true
+	target.StartTLS()
+	t.Cleanup(target.Close)
+	targetURL, err := url.Parse(target.URL)
+	if err != nil {
+		t.Fatalf("parse target url: %v", err)
+	}
+	return targetURL
+}
+
+// FallbackTransport clients (the default handler client) retry a refused proxy
+// directly, so the hand-built AgentService socket must do the same. Otherwise
+// agent-only models become unusable behind an allowlisting proxy while the
+// legacy net/http path still works.
+func TestDialCursorH2FallsBackDirectOnProxyRefusal(t *testing.T) {
+	targetURL := newH2Target(t, "direct-after-refusal")
+	proxyURL := newRefusingProxy(t)
+
+	client := &http.Client{
+		Transport: proxy.NewFallbackTransport(&http.Transport{Proxy: http.ProxyURL(proxyURL)}),
+	}
+
+	conn, err := dialCursorH2(context.Background(), client, targetURL.Hostname(), targetURL.Port(), &tls.Config{
+		ServerName:         targetURL.Hostname(),
+		NextProtos:         []string{"h2"},
+		InsecureSkipVerify: true,
+	})
+	if err != nil {
+		t.Fatalf("expected a direct fallback after the proxy refusal, got %v", err)
+	}
+	defer conn.Close()
+
+	clientConn, err := (&http2.Transport{}).NewClientConn(conn)
+	if err != nil {
+		t.Fatalf("h2 client conn: %v", err)
+	}
+	defer clientConn.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, targetURL.String(), strings.NewReader("hello"))
+	resp, err := clientConn.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("roundtrip after direct fallback: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "direct-after-refusal" {
+		t.Fatalf("expected the origin body, got %q", string(body))
+	}
+}
+
+// A proxy-pool client is a bare transport with no direct fallback: a refused
+// tunnel must fail closed so credentials never leak past the configured proxy.
+func TestDialCursorH2ProxyPoolRefusalFailsClosed(t *testing.T) {
+	targetURL := newH2Target(t, "must-not-be-reached")
+	proxyURL := newRefusingProxy(t)
+
+	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)}}
+
+	_, err := dialCursorH2(context.Background(), client, targetURL.Hostname(), targetURL.Port(), &tls.Config{
+		ServerName:         targetURL.Hostname(),
+		NextProtos:         []string{"h2"},
+		InsecureSkipVerify: true,
+	})
+	if err == nil {
+		t.Fatalf("a proxy-pool refusal must not be dialed around")
+	}
+	if !strings.Contains(err.Error(), "CONNECT") {
+		t.Fatalf("expected a CONNECT failure, got %v", err)
 	}
 }

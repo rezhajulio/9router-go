@@ -23,6 +23,23 @@ func TestCursorChecksum(t *testing.T) {
 	}
 }
 
+func TestCursorChecksumUpstreamVectors(t *testing.T) {
+	cases := []struct {
+		ms   int64
+		want string
+	}{
+		{1759136000000, "ctPV0gmuMID"},
+		{1790000000000, "9cbI1oq_MID"},
+		{1790673610000, "9ycpNWu_MID"},
+	}
+	for _, tc := range cases {
+		ts := tc.ms / 1000000
+		if got := cursorChecksumAt(ts, "MID"); got != tc.want {
+			t.Errorf("cursorChecksumAt(%d, %q) = %q, want %q", ts, "MID", got, tc.want)
+		}
+	}
+}
+
 func TestAgentValueRoundTrip(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -38,6 +55,7 @@ func TestAgentValueRoundTrip(t *testing.T) {
 		{"flat object", map[string]any{"a": float64(1), "b": "x", "c": true}},
 		{"nested object", map[string]any{"outer": map[string]any{"inner": []any{float64(1), float64(2), "three"}}}},
 		{"array mixed", []any{float64(1), "two", false, nil}},
+		{"empty array", []any{}},
 	}
 
 	for _, tc := range cases {
@@ -110,6 +128,29 @@ func TestMcpArgsDecode(t *testing.T) {
 	}
 	if res.Args["city"] != "Hanoi" {
 		t.Fatalf("unexpected arg city: %v", res.Args["city"])
+	}
+	if res.Truncated {
+		t.Fatalf("a complete payload must not be reported truncated")
+	}
+}
+
+// A payload cut off mid-field must be flagged instead of yielding a partial
+// argument object that a client tool would act on.
+func TestMcpArgsDecodeTruncated(t *testing.T) {
+	entry := ConcatBuffers(
+		EncodeField(1, WireBytes, "city"),
+		EncodeField(2, WireBytes, EncodeAgentValue("Hanoi")),
+	)
+	full := ConcatBuffers(
+		EncodeField(1, WireBytes, "get_weather"),
+		EncodeField(2, WireBytes, entry),
+	)
+	// Keep the declared field 2 length but drop the tail of its value.
+	cut := full[:len(full)-2]
+
+	res := DecodeMcpArgs(cut)
+	if !res.Truncated {
+		t.Fatalf("expected Truncated=true for a cut payload, got %+v", res)
 	}
 }
 
@@ -275,6 +316,30 @@ func TestBuildAgentRunFrameToolContinuation(t *testing.T) {
 	history := DecodeMessage(userAction.Get(7)[0].Value)
 	if len(history.Get(1)) != 2 {
 		t.Fatalf("expected 2 history entries (user question + assistant tool_call), got %d", len(history.Get(1)))
+	}
+}
+
+func TestBuildAgentRunFrameTrailingAssistant(t *testing.T) {
+	msgs := []any{
+		map[string]any{"role": "user", "content": "write a haiku"},
+		map[string]any{"role": "assistant", "content": "soft rain falling down"},
+	}
+	frame := BuildAgentRunFrame(msgs, "gpt-5.2", nil)
+	body := frame[5:]
+	clientMsg := DecodeMessage(body)
+	run := DecodeMessage(clientMsg.Get(1)[0].Value)
+	action := DecodeMessage(run.Get(2)[0].Value)
+	userAction := DecodeMessage(action.Get(1)[0].Value)
+
+	userMessage := DecodeMessage(userAction.Get(1)[0].Value)
+	gotText := string(userMessage.Get(1)[0].Value)
+	if gotText != "Continue." {
+		t.Fatalf("expected current turn to be 'Continue.', got %q", gotText)
+	}
+
+	history := DecodeMessage(userAction.Get(7)[0].Value)
+	if len(history.Get(1)) != 2 {
+		t.Fatalf("expected 2 history entries (user + assistant), got %d", len(history.Get(1)))
 	}
 }
 

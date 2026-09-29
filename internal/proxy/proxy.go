@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"9router/proxy/internal/constants"
@@ -47,6 +48,46 @@ func (e *UpstreamError) Error() string {
 
 var directProxyClient = &http.Client{
 	Transport: constants.DefaultHTTPTransportConfig.NewTransport(),
+}
+
+// ClientProxyFor reports the proxy the client would use for target, or nil for a
+// direct connection, plus whether that client retries directly on a proxy
+// refusal. It inspects the transports the chat handler builds (a bare
+// *http.Transport, possibly wrapped in FallbackTransport) so a hand-built socket
+// can make the same routing decision the client itself would.
+//
+// allowDirect mirrors FallbackTransport, which backs the default client: an
+// environment or sandbox proxy that refuses the tunnel is retried directly
+// there, so a hand-rolled dialer has to behave the same way or its traffic fails
+// behind such a proxy. A proxy-pool client is a bare transport and keeps failing
+// closed, so credentials never leak past a configured proxy.
+func ClientProxyFor(client *http.Client, target string) (proxyURL *url.URL, allowDirect bool) {
+	if client == nil {
+		return nil, false
+	}
+	rt := client.Transport
+	for {
+		switch t := rt.(type) {
+		case *FallbackTransport:
+			allowDirect = true
+			rt = t.Base
+		case *http.Transport:
+			if t.Proxy == nil {
+				return nil, allowDirect
+			}
+			probe, err := http.NewRequest(http.MethodPost, target, nil)
+			if err != nil {
+				return nil, allowDirect
+			}
+			resolved, err := t.Proxy(probe)
+			if err != nil {
+				return nil, allowDirect
+			}
+			return resolved, allowDirect
+		default:
+			return nil, allowDirect
+		}
+	}
 }
 
 func isProxyFailure(err error, resp *http.Response) bool {

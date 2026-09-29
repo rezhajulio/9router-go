@@ -89,7 +89,7 @@ func DecodeBuiltinEvent(execRequest DecodedMessage) *BuiltinEvent {
 			WorkingDir:   stringField(args, shellArgWorkingDir),
 			Timeout:      varintField(args, shellArgTimeout),
 			HardTimeout:  varintField(args, shellArgHardTimeout),
-			IsBackground: varintField(args, shellArgIsBackground) != 0,
+			IsBackground: variant == execVariantBgShell || varintField(args, shellArgIsBackground) != 0,
 		}
 	case execVariantRead:
 		args := DecodeMessage(execRequest.Get(variant)[0].Value)
@@ -128,6 +128,39 @@ func ParseClientTools(tools []any) []ClientTool {
 		out = append(out, ClientTool{Name: name, Parameters: params})
 	}
 	return out
+}
+
+// FilterClientToolsByChoice restricts client tools according to OpenAI tool_choice.
+func FilterClientToolsByChoice(tools []ClientTool, toolChoice any) []ClientTool {
+	if toolChoice == nil {
+		return tools
+	}
+	if s, ok := toolChoice.(string); ok {
+		switch s {
+		case "none":
+			return nil
+		case "auto", "required", "":
+			return tools
+		default:
+			return nil
+		}
+	}
+	if tcMap, ok := toolChoice.(map[string]any); ok {
+		if tcMap["type"] == "function" {
+			if fn, ok := tcMap["function"].(map[string]any); ok {
+				if name, ok := fn["name"].(string); ok && name != "" {
+					var filtered []ClientTool
+					for _, t := range tools {
+						if t.Name == name {
+							filtered = append(filtered, t)
+						}
+					}
+					return filtered
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // BuiltinBridge is a native builtin request rewritten as a call to one of
@@ -268,8 +301,11 @@ func bridgeShell(event *BuiltinEvent, tools []ClientTool) *BuiltinBridge {
 	// The external schemas supported here do not expose Cursor's timeout or
 	// hard-timeout semantics. Dropping either limit could broaden execution,
 	// so preserve the native typed rejection instead of emitting an unsafe
-	// call.
-	if event.Timeout > 0 || event.HardTimeout > 0 {
+	// call. The check is != 0 rather than > 0 because a negative proto int32
+	// sign-extends to a varint above 2^63, which varintField casts back to a
+	// negative int64: a set timeout would otherwise read as "unset" and the
+	// limit would be silently dropped.
+	if event.Timeout != 0 || event.HardTimeout != 0 {
 		return nil
 	}
 	// Background shells bridge onto pty_spawn, which needs the client

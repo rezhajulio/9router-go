@@ -2298,10 +2298,13 @@
   // Count only the saves that actually succeeded. Counting as we enqueue hid
   // partial failures: one rejected saveCustomModel still reported every queued
   // model as imported.
-  async function countFulfilled(promises: Promise<unknown>[]): Promise<number> {
-    if (promises.length === 0) return 0
+  async function settlePromises(promises: Promise<unknown>[]): Promise<{ count: number; firstError?: string }> {
+    if (promises.length === 0) return { count: 0 }
     const results = await Promise.allSettled(promises)
-    return results.filter((r) => r.status === 'fulfilled').length
+    const count = results.filter((r) => r.status === 'fulfilled').length
+    const rejected = results.find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined
+    const firstError = rejected ? (rejected.reason instanceof Error ? rejected.reason.message : String(rejected.reason)) : undefined
+    return { count, firstError }
   }
 
   function copyCompatibleModel(modelId: string) {
@@ -2322,7 +2325,6 @@
         notifications.warning('No models returned from /models.')
         return
       }
-      let imported = 0
       const savePromises: Promise<any>[] = []
       for (const m of models) {
         const modelId = typeof m === 'string' ? m : (m.id || m.name || m.model || '')
@@ -2335,16 +2337,17 @@
           })
         )
       }
-      imported = await countFulfilled(savePromises)
+      const { count: imported, firstError } = await settlePromises(savePromises)
       await refreshCompatibleModels()
       if (imported > 0) {
         notifyCustomModelsChanged()
         notifications.success(`Successfully imported ${imported} model(s).`)
         if (imported < savePromises.length) {
-          notifications.warning(`${savePromises.length - imported} model(s) failed to save.`)
+          const detail = firstError ? `: ${firstError}` : ''
+          notifications.warning(`${savePromises.length - imported} model(s) failed to save${detail}.`)
         }
       } else if (savePromises.length > 0) {
-        notifications.error('Failed to import models')
+        notifications.error(firstError ? `Failed to import models: ${firstError}` : 'Failed to import models')
       } else {
         notifications.info('All models already exist, no new models added.')
       }
@@ -2388,7 +2391,6 @@
         notifications.warning('No models returned from /models.')
         return
       }
-      let imported = 0
       const savePromises: Promise<any>[] = []
       for (const m of models) {
         const modelId = typeof m === 'string' ? m : (m.id || m.name || m.model || '')
@@ -2413,17 +2415,20 @@
           })
         )
       }
-      imported = await countFulfilled(savePromises)
+      const { count: imported, firstError } = await settlePromises(savePromises)
       const modelsData = await fetchProviderModelsData(providerId, storageAlias)
       customModels = modelsData.customModels
       if (imported > 0) {
         notifyCustomModelsChanged()
         notifications.success(`Successfully imported ${imported} model(s).`)
         if (imported < savePromises.length) {
-          notifications.warning(`${savePromises.length - imported} model(s) failed to save.`)
+          const detail = firstError ? `: ${firstError}` : ''
+          notifications.warning(`${savePromises.length - imported} model(s) failed to save${detail}.`)
         }
       } else if (savePromises.length > 0) {
-        notifications.error('Failed to import models')
+        notifications.error(firstError ? `Failed to import models: ${firstError}` : 'Failed to import models')
+      } else if (res.warning) {
+        notifications.warning(res.warning)
       } else {
         notifications.info('All models already exist, no new models added.')
       }

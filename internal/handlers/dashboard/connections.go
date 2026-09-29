@@ -1035,12 +1035,12 @@ func (h *DashboardHandler) HandleGetConnectionModels(w http.ResponseWriter, r *h
 				ghostMode = g
 			}
 		}
-		if token == "" || machineID == "" {
-			handlerutil.WriteJSONError(w, http.StatusBadRequest, "Cursor connection missing token or machineId")
-			return
-		}
 
-		liveModels, err := cursorpkg.ResolveCursorModels(r.Context(), token, machineID, ghostMode, true)
+		// nil client: this dashboard probe dials directly, matching the sibling
+		// kiro/grok/qoder catalogue probes in this handler. The chat path
+		// (live_catalog.go) is the one that must honour the connection's proxy
+		// pool, and it passes the resolved client.
+		liveModels, err := cursorpkg.ResolveCursorModels(r.Context(), nil, token, machineID, ghostMode, true)
 		if err != nil || len(liveModels) == 0 {
 			// Fall back to static catalog
 			staticModels := providers.GetProviderModels("cursor")

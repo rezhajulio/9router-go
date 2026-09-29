@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -45,12 +46,8 @@ func executeCursorLegacy(w http.ResponseWriter, req *Request, bodyMap map[string
 	// Claude Code CLI traffic is forced into agent mode (#643). The inbound
 	// User-Agent travels on the request context: ConnData only carries the
 	// connection's providerSpecificData, so reading it from there never matched.
-	forceAgentMode := false
-	if ua := strings.ToLower(handlerutil.GetUserAgent(ctx)); ua != "" {
-		if strings.Contains(ua, "claude-cli") || strings.Contains(ua, "claude-code") || strings.Contains(ua, "claude code") {
-			forceAgentMode = true
-		}
-	}
+	ua := handlerutil.GetUserAgent(ctx)
+	forceAgentMode := strings.Contains(ua, "claude-cli") || strings.Contains(ua, "claude-code") || strings.Contains(ua, "Claude Code")
 
 	framedBody := cursorpkg.GenerateLegacyCursorBody(rawMsgs, model, tools, effort, forceAgentMode)
 
@@ -109,7 +106,9 @@ func streamCursorLegacy(w http.ResponseWriter, req *Request, body io.Reader, mod
 	flusher, _ := w.(http.Flusher)
 
 	var pending []byte
-	var totalThinking string
+	var totalThinking strings.Builder
+	var streamErrorCode string
+	var readErr error
 	emittedVisible := 0
 	emitted := false
 	streamErr := ""
@@ -134,6 +133,7 @@ func streamCursorLegacy(w http.ResponseWriter, req *Request, body io.Reader, mod
 				parsed := cursorpkg.ExtractLegacyResponse(payload)
 				if parsed.Error != "" {
 					streamErr = parsed.Error
+					streamErrorCode = parsed.ErrorCode
 					return
 				}
 				if parsed.ToolCall != nil {
@@ -154,8 +154,8 @@ func streamCursorLegacy(w http.ResponseWriter, req *Request, body io.Reader, mod
 					emitted = true
 				}
 				if composerModel && parsed.Thinking != "" {
-					totalThinking += parsed.Thinking
-					vis := cursorpkg.VisibleComposerContentFromThinking(totalThinking)
+					totalThinking.WriteString(parsed.Thinking)
+					vis := cursorpkg.VisibleComposerContentFromThinking(totalThinking.String())
 					if len(vis) > emittedVisible {
 						delta := vis[emittedVisible:]
 						emittedVisible = len(vis)
@@ -171,6 +171,7 @@ func streamCursorLegacy(w http.ResponseWriter, req *Request, body io.Reader, mod
 			}
 		}
 		if rErr != nil || streamErr != "" {
+			readErr = rErr
 			break
 		}
 	}
@@ -187,17 +188,38 @@ func streamCursorLegacy(w http.ResponseWriter, req *Request, body io.Reader, mod
 					Body:       cursorErrorBody(streamErr, "api_error"),
 				}
 			}
+			status := http.StatusBadRequest
+			errType := "api_error"
+			if streamErrorCode == "resource_exhausted" || streamErr == "resource_exhausted" {
+				status = http.StatusTooManyRequests
+				errType = "rate_limit_error"
+			}
 			return &proxy.UpstreamError{
-				StatusCode: http.StatusTooManyRequests,
-				Body:       cursorErrorBody(streamErr, "rate_limit_error"),
+				StatusCode: status,
+				Body:       cursorErrorBody(streamErr, errType),
 			}
 		}
 		writeSSEError(w, flusher, streamErr)
 		return nil
 	}
 
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		if !emitted {
+			return fmt.Errorf("cursor legacy read failed: %w", readErr)
+		}
+		writeSSEError(w, flusher, "stream truncated")
+		return &errCursorCommitted{err: readErr}
+	}
+
 	// finish_reason must reflect the turn: a tool call ends it as tool_calls.
-	writeSSEChunk(w, flusher, responseID, created, model, "", nil, finishReasonFor(toolCalls))
+	promptTokens := len(req.Body) / 4
+	compTokens := completionChars / 4
+	usageMap := map[string]any{
+		"prompt_tokens":     promptTokens,
+		"completion_tokens": compTokens,
+		"total_tokens":      promptTokens + compTokens,
+	}
+	writeSSEChunkWithUsage(w, flusher, responseID, created, model, "", nil, finishReasonFor(toolCalls), usageMap)
 	_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 	if flusher != nil {
 		flusher.Flush()
@@ -207,13 +229,15 @@ func streamCursorLegacy(w http.ResponseWriter, req *Request, body io.Reader, mod
 
 // respondCursorLegacy collects a ChatService turn and writes one chat.completion.
 func respondCursorLegacy(w http.ResponseWriter, body io.Reader, model string, composerModel bool, responseID string, created int64, req *Request) error {
-	var totalContent string
-	var totalThinking string
+	var totalContent strings.Builder
+	var totalThinking strings.Builder
 	var toolCalls []map[string]any
 	toolCallsByID := make(map[string]map[string]any)
 
 	var pending []byte
 	streamErr := ""
+	var streamErrorCode string
+	var readErr error
 	framingErr := false
 	buf := make([]byte, 4096)
 	for {
@@ -224,9 +248,8 @@ func respondCursorLegacy(w http.ResponseWriter, body io.Reader, model string, co
 			pending, ok = cursorpkg.DecodeAgentFrames(pending, func(payload []byte) {
 				parsed := cursorpkg.ExtractLegacyResponse(payload)
 				if parsed.Error != "" {
-					// Upstream stops reading at the first error frame, then still
-					// returns the completion when content already arrived.
 					streamErr = parsed.Error
+					streamErrorCode = parsed.ErrorCode
 					return
 				}
 				if parsed.ToolCall != nil {
@@ -251,10 +274,10 @@ func respondCursorLegacy(w http.ResponseWriter, body io.Reader, model string, co
 					}
 				}
 				if parsed.Text != "" {
-					totalContent += parsed.Text
+					totalContent.WriteString(parsed.Text)
 				}
 				if parsed.Thinking != "" {
-					totalThinking += parsed.Thinking
+					totalThinking.WriteString(parsed.Thinking)
 				}
 			})
 			if !ok {
@@ -263,30 +286,44 @@ func respondCursorLegacy(w http.ResponseWriter, body io.Reader, model string, co
 			}
 		}
 		if rErr != nil || streamErr != "" {
+			readErr = rErr
 			break
 		}
 	}
 
-	if streamErr != "" && totalContent == "" && len(toolCalls) == 0 {
+	finalContent := totalContent.String()
+	totalThinkingStr := totalThinking.String()
+
+	if streamErr != "" && finalContent == "" && len(toolCalls) == 0 {
 		if framingErr {
 			return &proxy.UpstreamError{
 				StatusCode: http.StatusBadGateway,
 				Body:       cursorErrorBody(streamErr, "api_error"),
 			}
 		}
+		status := http.StatusBadRequest
+		errType := "api_error"
+		if streamErrorCode == "resource_exhausted" || streamErr == "resource_exhausted" {
+			status = http.StatusTooManyRequests
+			errType = "rate_limit_error"
+		}
 		return &proxy.UpstreamError{
-			StatusCode: http.StatusTooManyRequests,
-			Body:       cursorErrorBody(streamErr, "rate_limit_error"),
+			StatusCode: status,
+			Body:       cursorErrorBody(streamErr, errType),
 		}
 	}
 
-	if composerModel && totalContent == "" && totalThinking != "" {
-		totalContent = cursorpkg.VisibleComposerContentFromThinking(totalThinking)
+	if readErr != nil && !errors.Is(readErr, io.EOF) && finalContent == "" && len(toolCalls) == 0 {
+		return fmt.Errorf("cursor legacy read failed: %w", readErr)
+	}
+
+	if composerModel && finalContent == "" && totalThinkingStr != "" {
+		finalContent = cursorpkg.VisibleComposerContentFromThinking(totalThinkingStr)
 	}
 
 	msg := map[string]any{
 		"role":    "assistant",
-		"content": totalContent,
+		"content": finalContent,
 	}
 	if len(toolCalls) > 0 {
 		msg["tool_calls"] = toolCalls
@@ -306,12 +343,12 @@ func respondCursorLegacy(w http.ResponseWriter, body io.Reader, model string, co
 		},
 		"usage": map[string]any{
 			"prompt_tokens":     len(req.Body) / 4,
-			"completion_tokens": len(totalContent) / 4,
-			"total_tokens":      (len(req.Body) + len(totalContent)) / 4,
+			"completion_tokens": len(finalContent) / 4,
+			"total_tokens":      (len(req.Body) + len(finalContent)) / 4,
 		},
 	}
 
-	recordCursorUsage(req, len(totalContent)+len(totalThinking))
+	recordCursorUsage(req, len(finalContent)+len(totalThinkingStr))
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(respPayload); err != nil {
 		return &errCursorCommitted{err: err}

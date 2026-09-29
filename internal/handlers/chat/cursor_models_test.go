@@ -21,11 +21,13 @@ func TestCursorDynamicModelListing_WithMock(t *testing.T) {
 		t.Fatalf("delete connections: %v", err)
 	}
 
+	clearLiveCatalogStore()
+	t.Cleanup(clearLiveCatalogStore)
 	cursorpkg.ClearCursorModelCache()
-
+	t.Cleanup(cursorpkg.ClearCursorModelCache)
 	// Mock offline fetch returning dynamic model
 	origFetch := cursorpkg.FetchCursorProtoFunc
-	cursorpkg.FetchCursorProtoFunc = func(ctx context.Context, endpointURL string, headers map[string]string) ([]byte, error) {
+	cursorpkg.FetchCursorProtoFunc = func(ctx context.Context, endpointURL string, headers map[string]string, _ *http.Client) ([]byte, error) {
 		m := cursorpkg.ConcatBuffers(
 			cursorpkg.EncodeField(1, cursorpkg.WireBytes, "cursor-small-free"),
 			cursorpkg.EncodeField(4, cursorpkg.WireBytes, "Cursor Small Free"),
@@ -85,11 +87,13 @@ func TestCursorDynamicModelListingFallback(t *testing.T) {
 		t.Fatalf("delete connections: %v", err)
 	}
 
+	clearLiveCatalogStore()
+	t.Cleanup(clearLiveCatalogStore)
 	cursorpkg.ClearCursorModelCache()
-
+	t.Cleanup(cursorpkg.ClearCursorModelCache)
 	// Mock offline fetch returning error
 	origFetch := cursorpkg.FetchCursorProtoFunc
-	cursorpkg.FetchCursorProtoFunc = func(ctx context.Context, endpointURL string, headers map[string]string) ([]byte, error) {
+	cursorpkg.FetchCursorProtoFunc = func(ctx context.Context, endpointURL string, headers map[string]string, _ *http.Client) ([]byte, error) {
 		return nil, fmt.Errorf("simulated network failure")
 	}
 	defer func() {

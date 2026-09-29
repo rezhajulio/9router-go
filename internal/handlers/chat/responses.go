@@ -147,9 +147,9 @@ func (h *ChatHandler) HandleResponses(w http.ResponseWriter, r *http.Request) {
 // translation when the source format already equals the target format.
 func (h *ChatHandler) newResponsesContext(r *http.Request, requestedModel string, modelInfo *ModelInfo, body *[]byte) context.Context {
 	ctx := handlerutil.WithSessionID(r.Context(), handlerutil.ExtractSessionID(r))
+	ctx = handlerutil.WithUserAgent(ctx, r.Header.Get("User-Agent"))
 	ctx = translator.WithClientFormat(ctx, translator.ClientFormatResponses)
 	ctx = translator.WithRequestedModel(ctx, stripModelContextMarker(requestedModel))
-
 	providerCfg, err := h.getProviderConfig(modelInfo.Provider, nil)
 	if err == nil && executor.UpstreamSpeaksResponses(modelInfo.Provider, modelInfo.Model, providerCfg) {
 		log.Debug("chat", "responses passthrough", "provider", modelInfo.Provider, "model", modelInfo.Model)

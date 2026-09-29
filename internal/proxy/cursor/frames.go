@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"compress/zlib"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -24,6 +25,9 @@ const (
 // payload could otherwise expand until the proxy runs out of memory.
 const maxDecompressedFrameLength = 64 << 20
 
+// ErrFrameTooLarge reports when a decompressed frame exceeds maxDecompressedFrameLength.
+var ErrFrameTooLarge = fmt.Errorf("decompressed frame exceeds %d bytes", maxDecompressedFrameLength)
+
 // readBoundedFrame reads a decompressed frame up to maxDecompressedFrameLength.
 // Exceeding the cap is an error rather than a silent truncation.
 func readBoundedFrame(r io.Reader) ([]byte, error) {
@@ -32,7 +36,7 @@ func readBoundedFrame(r io.Reader) ([]byte, error) {
 		return nil, err
 	}
 	if len(out) > maxDecompressedFrameLength {
-		return nil, fmt.Errorf("decompressed frame exceeds %d bytes", maxDecompressedFrameLength)
+		return nil, ErrFrameTooLarge
 	}
 	return out, nil
 }
@@ -54,6 +58,9 @@ func DecompressPayload(payload []byte, flags byte) ([]byte, error) {
 			if readErr == nil {
 				return decompressed, nil
 			}
+			if errors.Is(readErr, ErrFrameTooLarge) {
+				return nil, readErr
+			}
 		}
 
 		// 2. Try standard zlib decompression (RFC 1950 header)
@@ -64,14 +71,24 @@ func DecompressPayload(payload []byte, flags byte) ([]byte, error) {
 			if readErr == nil {
 				return decompressed, nil
 			}
+			if errors.Is(readErr, ErrFrameTooLarge) {
+				return nil, readErr
+			}
 		}
 
 		// 3. Fall back to raw deflate (RFC 1951 without wrapper headers)
 		fl := flate.NewReader(bytes.NewReader(payload))
-		decompressed, err := readBoundedFrame(fl)
+		decompressed, readErr := readBoundedFrame(fl)
 		_ = fl.Close()
-		if err == nil {
+		if readErr == nil {
 			return decompressed, nil
+		}
+		if errors.Is(readErr, ErrFrameTooLarge) {
+			return nil, readErr
+		}
+
+		if flags == CompressFlagGzip || flags == CompressFlagGzipTrailer {
+			return nil, fmt.Errorf("failed to decompress gzip frame: %w", readErr)
 		}
 
 		return payload, nil
@@ -106,8 +123,12 @@ func DecodeAgentFrames(buffer []byte, onFrame func(payload []byte)) (pending []b
 		pending = pending[frameLen:]
 
 		decompressed, err := DecompressPayload(payload, flags)
-		if err == nil && (flags&CompressFlagTrailer) == 0 {
-			onFrame(decompressed)
+		if err == nil {
+			if (flags&CompressFlagTrailer) == 0 || bytes.Contains(decompressed, []byte(`"error"`)) {
+				onFrame(decompressed)
+			}
+		} else {
+			return pending, false
 		}
 	}
 	return pending, true

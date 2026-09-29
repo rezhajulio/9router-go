@@ -606,7 +606,7 @@ export const api = {
     }),
   /** List models from a connection's upstream (compatible nodes; upstream GET /api/providers/[id]/models). */
   getConnectionModels: (connectionId: string) =>
-    request<{ provider: string; connectionId: string; models: Array<{ id?: string; name?: string; model?: string } | string> }>(
+    request<{ provider: string; connectionId: string; warning?: string; models: Array<{ id?: string; name?: string; model?: string } | string> }>(
       `/api/providers/${encodeURIComponent(connectionId)}/models`,
     ),
 

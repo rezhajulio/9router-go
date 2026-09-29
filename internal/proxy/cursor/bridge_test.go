@@ -57,6 +57,7 @@ func TestDecodeBuiltinEvent(t *testing.T) {
 		wantNil bool
 		kind    string
 		command string
+		workDir string
 		path    string
 		bg      bool
 		timeout int64
@@ -66,6 +67,7 @@ func TestDecodeBuiltinEvent(t *testing.T) {
 			req:     shellExecRequest(2, "ls -la", "/tmp", 0, 0, false),
 			kind:    BuiltinShell,
 			command: "ls -la",
+			workDir: "/tmp",
 		},
 		{
 			name:    "shell-stream decodes as shell",
@@ -76,6 +78,14 @@ func TestDecodeBuiltinEvent(t *testing.T) {
 		{
 			name:    "background shell keeps flags",
 			req:     shellExecRequest(16, "sleep 60", "", 5, 0, true),
+			kind:    BuiltinShell,
+			command: "sleep 60",
+			bg:      true,
+			timeout: 5,
+		},
+		{
+			name:    "background shell variant 16 without is_background flag is still background",
+			req:     shellExecRequest(16, "sleep 60", "", 5, 0, false),
 			kind:    BuiltinShell,
 			command: "sleep 60",
 			bg:      true,
@@ -122,6 +132,9 @@ func TestDecodeBuiltinEvent(t *testing.T) {
 			if ev.Command != tt.command {
 				t.Fatalf("command = %q, want %q", ev.Command, tt.command)
 			}
+			if ev.WorkingDir != tt.workDir {
+				t.Fatalf("workingDir = %q, want %q", ev.WorkingDir, tt.workDir)
+			}
 			if ev.Path != tt.path {
 				t.Fatalf("path = %q, want %q", ev.Path, tt.path)
 			}
@@ -163,6 +176,30 @@ func TestBridgeShell(t *testing.T) {
 		ev := DecodeBuiltinEvent(shellExecRequest(2, "ls", "", 0, 60, false))
 		if b := BridgeBuiltinTool(ev, tools); b != nil {
 			t.Fatalf("hard timeout must fail closed, got %+v", b)
+		}
+	})
+
+	t.Run("sign-extended negative timeout fails closed", func(t *testing.T) {
+		// A proto int32 timeout of -1 arrives as a 10-byte varint (2^64-1),
+		// which varintField casts back to a negative int64. The limit is set,
+		// so the bridge must not silently drop it.
+		args := ConcatBuffers(
+			EncodeField(1, WireBytes, "ls"),
+			EncodeField(3, WireVarint, uint64(0xFFFFFFFFFFFFFFFF)),
+		)
+		execReq := DecodeMessage(ConcatBuffers(
+			EncodeField(1, WireVarint, 1),
+			EncodeField(2, WireBytes, args),
+		))
+		ev := DecodeBuiltinEvent(execReq)
+		if ev == nil {
+			t.Fatalf("expected event")
+		}
+		if ev.Timeout == 0 {
+			t.Fatalf("expected a non-zero decoded timeout, got 0")
+		}
+		if b := BridgeBuiltinTool(ev, tools); b != nil {
+			t.Fatalf("negative timeout must fail closed, got %+v", b)
 		}
 	})
 
@@ -212,6 +249,39 @@ func TestBridgeShell(t *testing.T) {
 		ev := DecodeBuiltinEvent(shellExecRequest(2, "ls", "", 0, 0, false))
 		if b := BridgeBuiltinTool(ev, []ClientTool{bashTool("Bash", shellSchema(nil))}); b == nil {
 			t.Fatalf("expected case-insensitive match")
+		}
+	})
+
+	t.Run("maps cwd when schema supports it", func(t *testing.T) {
+		schema := shellSchema(map[string]any{
+			"cwd": map[string]any{"type": "string"},
+		})
+		ev := DecodeBuiltinEvent(shellExecRequest(2, "ls", "/repo", 0, 0, false))
+		b := BridgeBuiltinTool(ev, []ClientTool{bashTool("bash", schema)})
+		if b == nil {
+			t.Fatalf("expected bridge, got nil")
+		}
+		if b.Arguments["cwd"] != "/repo" {
+			t.Fatalf("cwd = %v, want /repo", b.Arguments["cwd"])
+		}
+	})
+
+	t.Run("uses required alias over earlier optional alias", func(t *testing.T) {
+		schema := map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"command": map[string]any{"type": "string"},
+				"cmd":     map[string]any{"type": "string"},
+			},
+			"required": []any{"cmd"},
+		}
+		ev := DecodeBuiltinEvent(shellExecRequest(2, "echo 1", "", 0, 0, false))
+		b := BridgeBuiltinTool(ev, []ClientTool{bashTool("bash", schema)})
+		if b == nil {
+			t.Fatalf("expected bridge, got nil")
+		}
+		if _, ok := b.Arguments["cmd"]; !ok {
+			t.Fatalf("expected required alias 'cmd', got args: %+v", b.Arguments)
 		}
 	})
 }
@@ -291,5 +361,38 @@ func TestRejectExecRequestShellStream(t *testing.T) {
 	execClient := DecodeMessage(dec.Get(2)[0].Value)
 	if !execClient.Has(2) {
 		t.Fatalf("expected shell result payload under field 2")
+	}
+}
+
+func TestFilterClientToolsByChoice(t *testing.T) {
+	tools := []ClientTool{
+		{Name: "bash"},
+		{Name: "read"},
+	}
+
+	if got := FilterClientToolsByChoice(tools, nil); len(got) != 2 {
+		t.Fatalf("nil choice: want 2, got %d", len(got))
+	}
+	if got := FilterClientToolsByChoice(tools, "auto"); len(got) != 2 {
+		t.Fatalf("auto choice: want 2, got %d", len(got))
+	}
+	if got := FilterClientToolsByChoice(tools, "none"); len(got) != 0 {
+		t.Fatalf("none choice: want 0, got %d", len(got))
+	}
+
+	choiceMap := map[string]any{
+		"type": "function",
+		"function": map[string]any{
+			"name": "read",
+		},
+	}
+	got := FilterClientToolsByChoice(tools, choiceMap)
+	if len(got) != 1 || got[0].Name != "read" {
+		t.Fatalf("function choice: want [read], got %+v", got)
+	}
+
+	invalidMap := map[string]any{"type": "other"}
+	if got := FilterClientToolsByChoice(tools, invalidMap); len(got) != 0 {
+		t.Fatalf("invalid choice: want 0, got %d", len(got))
 	}
 }

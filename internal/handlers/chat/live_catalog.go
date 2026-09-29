@@ -143,15 +143,23 @@ func (h *ChatHandler) resolveLiveCatalog(ctx context.Context, conn *models.Provi
 	// One upstream call per credential even when many requests race a cold
 	// cache: the losers wait for the winner's result instead of each fanning
 	// out to the provider API.
+	//
+	// The fetch runs detached from the triggering caller: singleflight shares
+	// one result with every waiter, so letting the first caller's cancellation
+	// propagate would abort the shared fetch and hand the static fallback to
+	// requests whose own client is still connected. Each fetcher still bounds
+	// itself (cursor 3s, kiro/grok-cli/compatible liveCatalogFastHTTP), so the
+	// detached context cannot hang the flight.
+	flightCtx := context.WithoutCancel(ctx)
 	result, err, _ := liveCatalogFlight.Do(cacheKey, func() (any, error) {
 		if cached, ok := liveCatalogCached(cacheKey); ok {
 			return cached, nil
 		}
-		discovered := fetch(ctx, accessToken)
+		discovered := fetch(flightCtx, accessToken)
 		if len(discovered) == 0 && liveCatalogRefreshToken(conn) != "" {
 			// Upstream refreshes the credential on 401/403 and retries once.
 			if refreshed, _, rErr := h.forceRefreshOAuthToken(conn.ID); rErr == nil && refreshed != "" {
-				discovered = fetch(ctx, refreshed)
+				discovered = fetch(flightCtx, refreshed)
 			} else if rErr != nil {
 				log.Warn("models", "live catalog token refresh failed", "provider", providerID, "conn", conn.ID, "error", rErr)
 			}
@@ -622,7 +630,11 @@ func (h *ChatHandler) fetchCursorLiveCatalog(ctx context.Context, conn *models.P
 	}
 	ctxTimeout, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	liveModels, err := cursorpkg.ResolveCursorModels(ctxTimeout, token, machineID, ghostMode, false)
+	// Discovery carries the account's bearer token and machine-id checksum, so it
+	// goes through the connection's resolved client (proxy pool / strictProxy)
+	// exactly like the chat path instead of dialing around the pool.
+	client := h.getClientForConnection(connData)
+	liveModels, err := cursorpkg.ResolveCursorModels(ctxTimeout, client, token, machineID, ghostMode, false)
 	if err != nil {
 		log.Warn("models", "Cursor live model fetch failed", "error", err)
 		return nil

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### ✨ Cursor agent stream keepalive (Amp "stream stalled" fix)
+
+- AgentService turns can go quiet for minutes (long model latency, server-side tool work) while the proxy forwarded nothing to the client, so harnesses with a stream watchdog killed healthy turns — Amp reports "stream stalled after 120000 ms". The relay now reads upstream on a separate goroutine and emits an SSE comment (`: ping`) every 20s of upstream idle; comments are ignored by event parsers but count as stream activity for watchdogs. Keepalives bypass the response recorder so they don't pollute the mirrored response buffer or trip the TTFT measurement. Covered by `TestStreamCursorAgentEmitsClientKeepalive`.
+
 ### ✨ Cursor builtin tool bridging (OmniRoute parity)
 
 - When the Cursor AgentService asked the client to run a native IDE builtin (shell, read, …) the proxy could only decline it, so agent harnesses like Amp stalled or degraded on the "requested IDE tool variant … which this proxy cannot execute" throw. The proxy now bridges the request onto a schema-compatible tool the caller declared: a native shell request becomes a call to the client's `bash`/`shell`/`run_terminal_cmd` tool, a native read becomes a call to `read`/`read_file`. The typed rejection still goes upstream; the bridged call is emitted as a normal OpenAI `tool_call` so the harness executes it and returns the result on the next turn.

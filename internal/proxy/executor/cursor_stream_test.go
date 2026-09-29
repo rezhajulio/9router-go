@@ -3,9 +3,12 @@ package executor
 import (
 	"bytes"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	cursorpkg "9router/proxy/internal/proxy/cursor"
 )
@@ -90,3 +93,85 @@ func TestStreamCursorAgentEmitsSingleTerminal(t *testing.T) {
 		})
 	}
 }
+
+// lockedRecorder is an httptest.ResponseRecorder safe for concurrent use: the
+// relay loop writes from its own goroutine while the test polls the body.
+type lockedRecorder struct {
+	*httptest.ResponseRecorder
+	mu sync.Mutex
+}
+
+func (l *lockedRecorder) Write(b []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.ResponseRecorder.Write(b)
+}
+
+func (l *lockedRecorder) Flush() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.ResponseRecorder.Flush()
+}
+
+func (l *lockedRecorder) snapshot() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.ResponseRecorder.Body.String()
+}
+
+// A quiet upstream turn must not look stalled to the client: while AgentService
+// sends nothing, the relay emits SSE comment keepalives so harnesses with a
+// stream watchdog (Amp: "stream stalled after 120000 ms") keep the turn alive.
+func TestStreamCursorAgentEmitsClientKeepalive(t *testing.T) {
+	old := cursorClientPingInterval
+	cursorClientPingInterval = 20 * time.Millisecond
+	defer func() { cursorClientPingInterval = old }()
+
+	pr, pw := io.Pipe()
+	session := &agentSession{body: pr}
+	rec := &lockedRecorder{ResponseRecorder: httptest.NewRecorder()}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- streamCursorAgent(rec, &Request{}, session, "gpt-5.6", false, "chatcmpl-test", 1, nil)
+	}()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if strings.Contains(rec.snapshot(), ": ping\n\n") {
+			break
+		}
+		if time.Now().After(deadline) {
+			_ = pw.Close()
+			t.Fatalf("no client keepalive within 3s of upstream silence\n%s", rec.snapshot())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// End the turn cleanly afterwards: exactly one terminal chunk and [DONE].
+	turnEnded := cursorpkg.WrapConnectRPCFrame(cursorpkg.EncodeField(1, cursorpkg.WireBytes,
+		cursorpkg.EncodeField(14, cursorpkg.WireVarint, 1)))
+	if _, err := pw.Write(turnEnded); err != nil {
+		t.Fatalf("writing turn end: %v", err)
+	}
+	_ = pw.Close()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("streamCursorAgent returned %v, want nil", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("streamCursorAgent did not return after turn end")
+	}
+
+	body := rec.snapshot()
+	if got := strings.Count(body, "data: [DONE]"); got != 1 {
+		t.Fatalf("[DONE] emitted %d times, want exactly 1\n%s", got, body)
+	}
+	if got := strings.Count(body, `"finish_reason"`); got != 1 {
+		t.Fatalf("finish_reason emitted %d times, want exactly 1\n%s", got, body)
+	}
+}
+
+var _ http.Flusher = (*lockedRecorder)(nil)

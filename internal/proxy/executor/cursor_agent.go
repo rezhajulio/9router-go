@@ -84,6 +84,13 @@ func executeCursorAgent(w http.ResponseWriter, req *Request, bodyMap map[string]
 	return respondCursorAgent(w, session, model, composerModel, responseID, created, req, cursorpkg.ParseClientTools(tools))
 }
 
+// cursorClientPingInterval bounds how long the client-facing SSE stream may go
+// without bytes on the wire. Upstream AgentService turns can legitimately stay
+// quiet for minutes (long model latency, server-side tool work); without
+// client-visible traffic harnesses with a stream watchdog (Amp reports "stream
+// stalled after 120000 ms") kill a healthy turn. A var so tests can shrink it.
+var cursorClientPingInterval = 20 * time.Second
+
 // streamCursorAgent relays an AgentService turn as OpenAI SSE chunks.
 func streamCursorAgent(w http.ResponseWriter, req *Request, session *agentSession, model string, composerModel bool, responseID string, created int64, clientTools []cursorpkg.ClientTool) error {
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -102,170 +109,229 @@ func streamCursorAgent(w http.ResponseWriter, req *Request, session *agentSessio
 	// Published on every exit path, error frames included.
 	defer func() { recordCursorUsage(req, completionChars) }()
 
+	// Reads run on a separate goroutine so the ticker below can emit SSE
+	// comment keepalives while upstream is quiet; blocking on ReadChunk
+	// directly would leave the client stream silent until the turn ends.
+	ctx := req.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	type cursorReadResult struct {
+		chunk []byte
+		err   error
+	}
+	reads := make(chan cursorReadResult, 1)
+	go func() {
+		defer close(reads)
+		for {
+			chunk, readErr := session.ReadChunk()
+			// ReadChunk reuses its buffer across calls, so the bytes must be
+			// copied before they cross to the relay loop.
+			var cp []byte
+			if len(chunk) > 0 {
+				cp = append([]byte(nil), chunk...)
+			}
+			select {
+			case reads <- cursorReadResult{chunk: cp, err: readErr}:
+			case <-ctx.Done():
+				return
+			}
+			if readErr != nil {
+				return
+			}
+		}
+	}()
+	ping := time.NewTicker(cursorClientPingInterval)
+	defer ping.Stop()
+	lastActivity := time.Now()
+	// Keepalives bypass the recorder wrapper: comment bytes must not pollute
+	// the mirrored response buffer or trip the TTFT measurement.
+	pingWriter := w
+	if rw, ok := w.(*cursorRecorderWriter); ok {
+		pingWriter = rw.ResponseWriter
+	}
+
+relay:
 	for !finished && streamErr == "" {
-		chunk, readErr := session.ReadChunk()
-		if len(chunk) > 0 {
-			pending = append(pending, chunk...)
-			var ok bool
-			pending, ok = cursorpkg.DecodeAgentFrames(pending, func(payload []byte) {
-				if finished {
-					return
+		select {
+		case <-ctx.Done():
+			break relay
+		case <-ping.C:
+			if time.Since(lastActivity) >= cursorClientPingInterval {
+				_, _ = fmt.Fprint(pingWriter, ": ping\n\n")
+				if flusher != nil {
+					flusher.Flush()
 				}
-				serverMsg := cursorpkg.DecodeMessage(payload)
-
-				// interaction_update (field 1)
-				if serverMsg.Has(cursorpkg.FieldInteractionUpdate) {
-					update := cursorpkg.DecodeMessage(serverMsg.Get(cursorpkg.FieldInteractionUpdate)[0].Value)
-					if update.Has(cursorpkg.FieldTextDelta) {
-						sub := cursorpkg.DecodeMessage(update.Get(cursorpkg.FieldTextDelta)[0].Value)
-						if sub.Has(1) {
-							delta := string(sub.Get(1)[0].Value)
-							if delta != "" {
-								emittedText = true
-								completionChars += len(delta)
-								writeSSEChunk(w, flusher, responseID, created, model, delta, nil, "")
-							}
-						}
+			}
+		case res, alive := <-reads:
+			if !alive {
+				break relay
+			}
+			chunk, readErr := res.chunk, res.err
+			if len(chunk) > 0 {
+				lastActivity = time.Now()
+				pending = append(pending, chunk...)
+				var ok bool
+				pending, ok = cursorpkg.DecodeAgentFrames(pending, func(payload []byte) {
+					if finished {
+						return
 					}
+					serverMsg := cursorpkg.DecodeMessage(payload)
 
-					if update.Has(cursorpkg.FieldThinkingDelta) {
-						sub := cursorpkg.DecodeMessage(update.Get(cursorpkg.FieldThinkingDelta)[0].Value)
-						if sub.Has(1) {
-							td := string(sub.Get(1)[0].Value)
-							if td != "" {
-								thinkingAcc += td
-								if composerModel {
-									vis := cursorpkg.VisibleComposerContentFromThinking(thinkingAcc)
-									if len(vis) > emittedVisible {
-										delta := vis[emittedVisible:]
-										emittedVisible = len(vis)
-										emittedText = true
-										completionChars += len(delta)
-										writeSSEChunk(w, flusher, responseID, created, model, delta, nil, "")
-									}
-								} else {
-									// Non-composer models stream thinking as reasoning_content
-									completionChars += len(td)
-									writeSSEReasoningChunk(w, flusher, responseID, created, model, td)
+					// interaction_update (field 1)
+					if serverMsg.Has(cursorpkg.FieldInteractionUpdate) {
+						update := cursorpkg.DecodeMessage(serverMsg.Get(cursorpkg.FieldInteractionUpdate)[0].Value)
+						if update.Has(cursorpkg.FieldTextDelta) {
+							sub := cursorpkg.DecodeMessage(update.Get(cursorpkg.FieldTextDelta)[0].Value)
+							if sub.Has(1) {
+								delta := string(sub.Get(1)[0].Value)
+								if delta != "" {
+									emittedText = true
+									completionChars += len(delta)
+									writeSSEChunk(w, flusher, responseID, created, model, delta, nil, "")
 								}
 							}
 						}
-					}
 
-					if update.Has(cursorpkg.FieldTurnEnded) {
-						if !emittedText && thinkingAcc != "" {
-							fb := thinkingAcc
-							if composerModel {
-								fb = cursorpkg.VisibleComposerContentFromThinking(thinkingAcc)
+						if update.Has(cursorpkg.FieldThinkingDelta) {
+							sub := cursorpkg.DecodeMessage(update.Get(cursorpkg.FieldThinkingDelta)[0].Value)
+							if sub.Has(1) {
+								td := string(sub.Get(1)[0].Value)
+								if td != "" {
+									thinkingAcc += td
+									if composerModel {
+										vis := cursorpkg.VisibleComposerContentFromThinking(thinkingAcc)
+										if len(vis) > emittedVisible {
+											delta := vis[emittedVisible:]
+											emittedVisible = len(vis)
+											emittedText = true
+											completionChars += len(delta)
+											writeSSEChunk(w, flusher, responseID, created, model, delta, nil, "")
+										}
+									} else {
+										// Non-composer models stream thinking as reasoning_content
+										completionChars += len(td)
+										writeSSEReasoningChunk(w, flusher, responseID, created, model, td)
+									}
+								}
 							}
-							if fb != "" {
-								completionChars += len(fb)
-								writeSSEChunk(w, flusher, responseID, created, model, fb, nil, "")
+						}
+
+						if update.Has(cursorpkg.FieldTurnEnded) {
+							if !emittedText && thinkingAcc != "" {
+								fb := thinkingAcc
+								if composerModel {
+									fb = cursorpkg.VisibleComposerContentFromThinking(thinkingAcc)
+								}
+								if fb != "" {
+									completionChars += len(fb)
+									writeSSEChunk(w, flusher, responseID, created, model, fb, nil, "")
+								}
 							}
-						}
-						finished = true
-						writeSSEChunk(w, flusher, responseID, created, model, "", nil, finishReasonFor(toolIndex))
-						_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
-						if flusher != nil {
-							flusher.Flush()
-						}
-						// The turn is over and its terminal chunk is out: nothing else
-						// in this payload may be handled, or a tool call from the same
-						// frame would be written after [DONE].
-						return
-					}
-				}
-
-				// kv_server_message (field 4)
-				if serverMsg.Has(cursorpkg.FieldKvServerMessage) {
-					kv := cursorpkg.DecodeMessage(serverMsg.Get(cursorpkg.FieldKvServerMessage)[0].Value)
-					var kvID uint64
-					if kv.Has(1) {
-						kvID = kv.Get(1)[0].Varint
-					}
-					var meta []byte
-					if kv.Has(4) {
-						meta = kv.Get(4)[0].Value
-					}
-					if kv.Has(2) {
-						_ = session.Write(cursorpkg.EncodeKvClientMessage(kvID, 2, cursorpkg.EncodeField(1, cursorpkg.WireBytes, []byte{}), meta))
-					} else if kv.Has(3) {
-						_ = session.Write(cursorpkg.EncodeKvClientMessage(kvID, 3, []byte{}, meta))
-					}
-				}
-
-				// exec_request (field 2)
-				if serverMsg.Has(cursorpkg.FieldExecRequest) {
-					execReq := cursorpkg.DecodeMessage(serverMsg.Get(cursorpkg.FieldExecRequest)[0].Value)
-					switch {
-					case execReq.Has(10):
-						_ = session.Write(cursorpkg.CreateRequestContextResponse(execReq))
-					case execReq.Has(11):
-						mcp := cursorpkg.DecodeMcpArgs(execReq.Get(11)[0].Value)
-						name := mcp.ToolName
-						if name == "" {
-							name = mcp.Name
-						}
-						if name == "" {
-							// No name means nothing can be handed to the client;
-							// decline the tool so the server keeps the turn alive
-							// instead of the stream failing.
-							writeExecControlFrames(session, execReq, "Cursor AgentService requested an MCP tool without a name", "exec_variant_unsupported")
+							finished = true
+							writeSSEChunk(w, flusher, responseID, created, model, "", nil, finishReasonFor(toolIndex))
+							_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+							if flusher != nil {
+								flusher.Flush()
+							}
+							// The turn is over and its terminal chunk is out: nothing else
+							// in this payload may be handled, or a tool call from the same
+							// frame would be written after [DONE].
 							return
 						}
-						tcID := mcp.ToolCallID
-						if tcID == "" {
-							tcID = fmt.Sprintf("call_%s", uuid.New().String())
+					}
+
+					// kv_server_message (field 4)
+					if serverMsg.Has(cursorpkg.FieldKvServerMessage) {
+						kv := cursorpkg.DecodeMessage(serverMsg.Get(cursorpkg.FieldKvServerMessage)[0].Value)
+						var kvID uint64
+						if kv.Has(1) {
+							kvID = kv.Get(1)[0].Varint
 						}
-						argsJSON, _ := json.Marshal(mcp.Args)
-						// One server turn may request several tools, so each call is
-						// emitted with its own index and the turn stays open until
-						// the server ends it; finish_reason is decided there.
-						completionChars += len(argsJSON)
-						writeSSEToolCall(w, flusher, responseID, created, model, tcID, name, string(argsJSON), toolIndex)
-						toolIndex++
-					default:
-						// OmniRoute parity: a native IDE builtin (shell/read)
-						// the model asked for is bridged onto a
-						// schema-compatible client tool when one exists,
-						// instead of only being declined. The typed rejection
-						// still goes upstream; the bridged call is emitted as
-						// a normal OpenAI tool_call so the harness can
-						// execute it and return the result on the next turn.
-						if bridge := cursorpkg.BridgeBuiltinTool(cursorpkg.DecodeBuiltinEvent(execReq), clientTools); bridge != nil {
-							if rej := cursorpkg.RejectExecRequest(execReq); rej != nil {
+						var meta []byte
+						if kv.Has(4) {
+							meta = kv.Get(4)[0].Value
+						}
+						if kv.Has(2) {
+							_ = session.Write(cursorpkg.EncodeKvClientMessage(kvID, 2, cursorpkg.EncodeField(1, cursorpkg.WireBytes, []byte{}), meta))
+						} else if kv.Has(3) {
+							_ = session.Write(cursorpkg.EncodeKvClientMessage(kvID, 3, []byte{}, meta))
+						}
+					}
+
+					// exec_request (field 2)
+					if serverMsg.Has(cursorpkg.FieldExecRequest) {
+						execReq := cursorpkg.DecodeMessage(serverMsg.Get(cursorpkg.FieldExecRequest)[0].Value)
+						switch {
+						case execReq.Has(10):
+							_ = session.Write(cursorpkg.CreateRequestContextResponse(execReq))
+						case execReq.Has(11):
+							mcp := cursorpkg.DecodeMcpArgs(execReq.Get(11)[0].Value)
+							name := mcp.ToolName
+							if name == "" {
+								name = mcp.Name
+							}
+							if name == "" {
+								// No name means nothing can be handed to the client;
+								// decline the tool so the server keeps the turn alive
+								// instead of the stream failing.
+								writeExecControlFrames(session, execReq, "Cursor AgentService requested an MCP tool without a name", "exec_variant_unsupported")
+								return
+							}
+							tcID := mcp.ToolCallID
+							if tcID == "" {
+								tcID = fmt.Sprintf("call_%s", uuid.New().String())
+							}
+							argsJSON, _ := json.Marshal(mcp.Args)
+							// One server turn may request several tools, so each call is
+							// emitted with its own index and the turn stays open until
+							// the server ends it; finish_reason is decided there.
+							completionChars += len(argsJSON)
+							writeSSEToolCall(w, flusher, responseID, created, model, tcID, name, string(argsJSON), toolIndex)
+							toolIndex++
+						default:
+							// OmniRoute parity: a native IDE builtin (shell/read)
+							// the model asked for is bridged onto a
+							// schema-compatible client tool when one exists,
+							// instead of only being declined. The typed rejection
+							// still goes upstream; the bridged call is emitted as
+							// a normal OpenAI tool_call so the harness can
+							// execute it and return the result on the next turn.
+							if bridge := cursorpkg.BridgeBuiltinTool(cursorpkg.DecodeBuiltinEvent(execReq), clientTools); bridge != nil {
+								if rej := cursorpkg.RejectExecRequest(execReq); rej != nil {
+									_ = session.Write(rej)
+								} else {
+									writeExecControlFrames(session, execReq,
+										fmt.Sprintf("Cursor AgentService requested IDE tool variant %d, which this proxy cannot execute", cursorpkg.ExecRequestVariant(execReq)),
+										"exec_variant_unsupported")
+								}
+								tcID := fmt.Sprintf("call_%s", uuid.New().String())
+								argsJSON, _ := json.Marshal(bridge.Arguments)
+								completionChars += len(argsJSON)
+								writeSSEToolCall(w, flusher, responseID, created, model, tcID, bridge.ToolName, string(argsJSON), toolIndex)
+								toolIndex++
+							} else if rej := cursorpkg.RejectExecRequest(execReq); rej != nil {
 								_ = session.Write(rej)
 							} else {
+								// A Cursor IDE builtin this proxy cannot execute, or a
+								// newer CLI variant without a known rejected shape.
+								// Answering with a throw keeps the turn going (this is
+								// how omp answers variants it has no handler for),
+								// whereas ending the stream failed the whole request.
 								writeExecControlFrames(session, execReq,
 									fmt.Sprintf("Cursor AgentService requested IDE tool variant %d, which this proxy cannot execute", cursorpkg.ExecRequestVariant(execReq)),
 									"exec_variant_unsupported")
 							}
-							tcID := fmt.Sprintf("call_%s", uuid.New().String())
-							argsJSON, _ := json.Marshal(bridge.Arguments)
-							completionChars += len(argsJSON)
-							writeSSEToolCall(w, flusher, responseID, created, model, tcID, bridge.ToolName, string(argsJSON), toolIndex)
-							toolIndex++
-						} else if rej := cursorpkg.RejectExecRequest(execReq); rej != nil {
-							_ = session.Write(rej)
-						} else {
-							// A Cursor IDE builtin this proxy cannot execute, or a
-							// newer CLI variant without a known rejected shape.
-							// Answering with a throw keeps the turn going (this is
-							// how omp answers variants it has no handler for),
-							// whereas ending the stream failed the whole request.
-							writeExecControlFrames(session, execReq,
-								fmt.Sprintf("Cursor AgentService requested IDE tool variant %d, which this proxy cannot execute", cursorpkg.ExecRequestVariant(execReq)),
-								"exec_variant_unsupported")
 						}
 					}
+				})
+				if !ok {
+					streamErr = "Cursor AgentService frame exceeded the accepted size"
 				}
-			})
-			if !ok {
-				streamErr = "Cursor AgentService frame exceeded the accepted size"
 			}
-		}
-		if readErr != nil {
-			break
+			if readErr != nil {
+				break relay
+			}
 		}
 	}
 

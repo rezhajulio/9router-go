@@ -31,6 +31,10 @@ func streamCursorAgent(w http.ResponseWriter, req *Request, session *agentSessio
 	streamErr := ""
 	toolIndex := 0
 	completionChars := 0
+	// Set by an error trailer: the turn failed upstream, and how it is reported
+	// depends on whether anything already reached the client.
+	var trailerErr *proxy.UpstreamError
+	var trailerErrMessage string
 	// Published on every exit path, error frames included.
 	defer func() { recordCursorUsage(req, completionChars) }()
 
@@ -82,7 +86,7 @@ func streamCursorAgent(w http.ResponseWriter, req *Request, session *agentSessio
 	}
 
 relay:
-	for !finished && streamErr == "" {
+	for !finished && streamErr == "" && trailerErr == nil {
 		select {
 		case <-ctx.Done():
 			break relay
@@ -159,6 +163,12 @@ relay:
 							// the same frame would be written after [DONE].
 							writeAgentTerminal(w, flusher, req, responseID, created, model, toolIndex, completionChars)
 							return
+
+						case agentEventError:
+							status, errType := agentTrailerErrorStatus(ev.ErrCode)
+							trailerErrMessage = ev.ErrMessage
+							trailerErr = &proxy.UpstreamError{StatusCode: status, Body: cursorErrorBody(ev.ErrMessage, errType)}
+							return
 						}
 					}
 				})
@@ -177,6 +187,17 @@ relay:
 	// frame, and above all not a second [DONE].
 	if finished {
 		return nil
+	}
+
+	// An error trailer: a typed retryable status lets fallback refresh the token
+	// or rotate the account. Once bytes are on the wire the only honest terminal
+	// is an SSE error, and the attempt must not be retried.
+	if trailerErr != nil {
+		if pingSent || emittedText || emittedReasoning || toolIndex > 0 {
+			writeSSEError(w, flusher, trailerErrMessage)
+			return &errCursorCommitted{err: trailerErr}
+		}
+		return trailerErr
 	}
 
 	if ctx.Err() != nil {

@@ -22,8 +22,11 @@ func respondCursorAgent(w http.ResponseWriter, session *agentSession, model stri
 	var pending []byte
 	finished := false
 	agentErr := ""
+	// Set by an error trailer. Non-streaming never commits early, so this is
+	// always reported as a typed upstream error.
+	var trailerErr *proxy.UpstreamError
 
-	for !finished && agentErr == "" {
+	for !finished && agentErr == "" && trailerErr == nil {
 		chunk, readErr := session.ReadChunk()
 		if len(chunk) > 0 {
 			pending = append(pending, chunk...)
@@ -60,6 +63,11 @@ func respondCursorAgent(w http.ResponseWriter, session *agentSession, model stri
 					case agentEventTurnEnded:
 						finished = true
 						return
+
+					case agentEventError:
+						status, errType := agentTrailerErrorStatus(ev.ErrCode)
+						trailerErr = &proxy.UpstreamError{StatusCode: status, Body: cursorErrorBody(ev.ErrMessage, errType)}
+						return
 					}
 				}
 			})
@@ -70,6 +78,12 @@ func respondCursorAgent(w http.ResponseWriter, session *agentSession, model stri
 		if readErr != nil {
 			break
 		}
+	}
+	// An error trailer is upstream truth: report it ahead of any cancellation so
+	// a quota or auth failure still rotates instead of being masked as a
+	// client-side abort.
+	if trailerErr != nil {
+		return trailerErr
 	}
 	if ctx := req.Ctx; ctx != nil && ctx.Err() != nil {
 		return ctx.Err()

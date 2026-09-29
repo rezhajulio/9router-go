@@ -1,9 +1,17 @@
 package executor
 
 import (
+	"bytes"
+	"encoding/binary"
+	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
+
+	"9router/proxy/internal/proxy"
 
 	cursorpkg "9router/proxy/internal/proxy/cursor"
 )
@@ -168,5 +176,113 @@ func TestDecodeAgentPayloadOrder(t *testing.T) {
 	}
 	if events[1].Kind != agentEventThinking || events[1].Text != "thinking" {
 		t.Fatalf("unexpected second event: %+v", events[1])
+	}
+}
+
+// trailerFrame builds a Connect end-stream frame (flag 0x02) whose payload is a
+// JSON error object, which is how a quota or auth failure arrives on HTTP 200.
+func trailerFrame(t *testing.T, body string) []byte {
+	t.Helper()
+	p := []byte(body)
+	f := make([]byte, 5+len(p))
+	f[0] = cursorpkg.CompressFlagTrailer
+	binary.BigEndian.PutUint32(f[1:5], uint32(len(p)))
+	copy(f[5:], p)
+	return f
+}
+
+// An error trailer must become a typed upstream error on the agent path too.
+// Decoding it as protobuf yields no fields, which is how a quota failure used to
+// surface as a generic "stream closed before the turn ended" 502 that rotated no
+// account and cooled nothing down.
+func TestStreamCursorAgentTrailerError(t *testing.T) {
+	tests := []struct {
+		name       string
+		payload    string
+		wantStatus int
+	}{
+		{
+			name:       "resource exhausted is a rate limit",
+			payload:    `{"error":{"code":"resource_exhausted","message":"quota exceeded"}}`,
+			wantStatus: http.StatusTooManyRequests,
+		},
+		{
+			name:       "unauthenticated is a 401 so the token refreshes",
+			payload:    `{"error":{"code":"unauthenticated","message":"token expired"}}`,
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "anything else is a plain request error",
+			payload:    `{"error":{"code":"permission_denied","message":"model not on your plan"}}`,
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, stream := range []bool{true, false} {
+		mode := map[bool]string{true: "stream", false: "non-stream"}[stream]
+		for _, tt := range tests {
+			t.Run(mode+"/"+tt.name, func(t *testing.T) {
+				rec := httptest.NewRecorder()
+				session := &agentSession{body: io.NopCloser(bytes.NewReader(trailerFrame(t, tt.payload)))}
+
+				var err error
+				if stream {
+					err = streamCursorAgent(rec, &Request{}, session, "gpt-5.6", false, "chatcmpl-test", 1, nil)
+				} else {
+					err = respondCursorAgent(rec, session, "gpt-5.6", false, "chatcmpl-test", 1, &Request{}, nil)
+				}
+
+				var ue *proxy.UpstreamError
+				if !errors.As(err, &ue) {
+					t.Fatalf("expected *proxy.UpstreamError, got %T (%v)", err, err)
+				}
+				if ue.StatusCode != tt.wantStatus {
+					t.Fatalf("status = %d, want %d", ue.StatusCode, tt.wantStatus)
+				}
+			})
+		}
+	}
+}
+
+// Once bytes are on the wire the trailer error cannot be reported as a status:
+// the client gets an SSE error terminal and the attempt must not be retried.
+func TestStreamCursorAgentTrailerErrorAfterOutput(t *testing.T) {
+	text := cursorpkg.WrapConnectRPCFrame(cursorpkg.EncodeField(1, cursorpkg.WireBytes,
+		cursorpkg.EncodeField(cursorpkg.FieldTextDelta, cursorpkg.WireBytes,
+			cursorpkg.EncodeField(1, cursorpkg.WireBytes, "partial"))))
+	body := append(append([]byte(nil), text...),
+		trailerFrame(t, `{"error":{"code":"resource_exhausted","message":"quota exceeded"}}`)...)
+
+	rec := httptest.NewRecorder()
+	session := &agentSession{body: io.NopCloser(bytes.NewReader(body))}
+	err := streamCursorAgent(rec, &Request{}, session, "gpt-5.6", false, "chatcmpl-test", 1, nil)
+
+	var committed *errCursorCommitted
+	if !errors.As(err, &committed) {
+		t.Fatalf("expected *errCursorCommitted so the attempt is not retried, got %T (%v)", err, err)
+	}
+	out := rec.Body.String()
+	if !strings.Contains(out, `"error"`) {
+		t.Fatalf("expected an SSE error frame, got %q", out)
+	}
+	if !strings.Contains(out, "[DONE]") {
+		t.Fatalf("expected the stream to terminate, got %q", out)
+	}
+	if strings.Count(out, "data: [DONE]") != 1 {
+		t.Fatalf("expected exactly one terminal, got %q", out)
+	}
+}
+
+// A JSON error trailer must be recognised before any protobuf decoding.
+func TestDecodeAgentPayloadErrorTrailer(t *testing.T) {
+	session, drain := pipeSession(t)
+	defer drain()
+
+	events := decodeAgentPayload(session, nil, []byte(`{"error":{"code":"resource_exhausted","message":"quota exceeded"}}`))
+	if len(events) != 1 || events[0].Kind != agentEventError {
+		t.Fatalf("expected a single error event, got %+v", events)
+	}
+	if events[0].ErrCode != "resource_exhausted" || events[0].ErrMessage != "quota exceeded" {
+		t.Fatalf("unexpected error event: %+v", events[0])
 	}
 }

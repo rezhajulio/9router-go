@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -410,65 +411,116 @@ func TestCursorLegacyTrailerErrorFrame(t *testing.T) {
 	}
 }
 
-func TestForwardCursorTranslatesOutput(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		textMsg := cursorpkg.EncodeField(1, cursorpkg.WireBytes, "hello from cursor")
-		respMsg := cursorpkg.EncodeField(2, cursorpkg.WireBytes, textMsg)
-		frame := cursorpkg.WrapConnectRPCFrame(respMsg)
-		_, _ = w.Write(frame)
+// startFakeAgentService serves one AgentService turn: it answers the Connect
+// bidi request with the given frames under a 200, which is what the hand-rolled
+// socket expects. Without this, a translation test that takes the agent path
+// would dial the live Cursor API.
+func startFakeAgentService(t *testing.T, frames ...[]byte) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/connect+proto")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		for _, frame := range frames {
+			_, _ = w.Write(frame)
+		}
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
 	}))
-	defer server.Close()
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	return srv
+}
 
-	restore := pointCursorLegacyAt(server.URL)
+// pointAgentAt redirects the AgentService socket, including the TLS settings an
+// httptest server needs, and restores both when the test ends.
+func pointAgentAt(t *testing.T, endpoint string) {
+	t.Helper()
+	prevEndpoint, prevTLS := cursorAgentEndpoint, cursorAgentTLSConfig
+	cursorAgentEndpoint = endpoint
+	cursorAgentTLSConfig = func(string) *tls.Config {
+		return &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h2"}} // httptest self-signed
+	}
+	t.Cleanup(func() {
+		cursorAgentEndpoint, cursorAgentTLSConfig = prevEndpoint, prevTLS
+	})
+}
+
+// Both relays build their own stream, so both have to honour the client's wire
+// format: a Claude Messages client must never receive chat.completion chunks.
+func TestForwardCursorTranslatesOutput(t *testing.T) {
+	// Agent path: one text delta then turn_ended, under a 200.
+	agentFrame := func() []byte {
+		text := cursorpkg.EncodeField(cursorpkg.FieldTextDelta, cursorpkg.WireBytes,
+			cursorpkg.EncodeField(1, cursorpkg.WireBytes, "hello from cursor"))
+		turnEnd := cursorpkg.EncodeField(cursorpkg.FieldTurnEnded, cursorpkg.WireVarint, 1)
+		return cursorpkg.WrapConnectRPCFrame(cursorpkg.EncodeField(cursorpkg.FieldInteractionUpdate, cursorpkg.WireBytes,
+			cursorpkg.ConcatBuffers(text, turnEnd)))
+	}()
+	pointAgentAt(t, startFakeAgentService(t, agentFrame).URL)
+
+	// Legacy path: one text frame, for a body the agent relay will not take.
+	legacy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		respMsg := cursorpkg.EncodeField(cursorpkg.FieldLegacyResponse, cursorpkg.WireBytes,
+			cursorpkg.EncodeField(cursorpkg.FieldLegacyResponseText, cursorpkg.WireBytes, "hello from cursor"))
+		_, _ = w.Write(cursorpkg.WrapConnectRPCFrame(respMsg))
+	}))
+	defer legacy.Close()
+	restore := pointCursorLegacyAt(legacy.URL)
 	defer restore()
 
-	t.Run("TranslateResp Claude non-stream", func(t *testing.T) {
-		rec := httptest.NewRecorder()
-		body := map[string]any{
+	// A content part the agent relay refuses keeps the legacy body deterministic
+	// and offline; every other case below is agent-capable.
+	legacyBody := func(stream bool) map[string]any {
+		return map[string]any{
+			"messages": []any{map[string]any{"role": "user", "content": []any{
+				map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:image/png;base64,AA=="}},
+			}}},
+			"stream": stream,
+		}
+	}
+	agentBody := func(stream bool) map[string]any {
+		return map[string]any{
 			"messages": []any{map[string]any{"role": "user", "content": "hi"}},
-			"stream":   false,
+			"stream":   stream,
 		}
-		b, _ := json.Marshal(body)
-		req := &Request{
-			ModelName:     "gpt-5.2",
-			Body:          b,
-			APIKey:        "test-token",
-			IsStream:      false,
-			TranslateResp: true,
-		}
+	}
 
-		err := ForwardCursor(rec, req)
-		if err != nil {
-			t.Fatalf("ForwardCursor failed: %v", err)
-		}
-		bodyStr := rec.Body.String()
-		if !strings.Contains(bodyStr, `"type":"message"`) {
-			t.Fatalf("expected Claude message format, got\n%s", bodyStr)
-		}
-	})
+	cases := []struct {
+		name string
+		body func(bool) map[string]any
+	}{{"agent", agentBody}, {"legacy", legacyBody}}
 
-	t.Run("TranslateResp Claude stream", func(t *testing.T) {
-		rec := httptest.NewRecorder()
-		body := map[string]any{
-			"messages": []any{map[string]any{"role": "user", "content": "hi"}},
-			"stream":   true,
-		}
-		b, _ := json.Marshal(body)
-		req := &Request{
-			ModelName:     "gpt-5.2",
-			Body:          b,
-			APIKey:        "test-token",
-			IsStream:      true,
-			TranslateResp: true,
-		}
+	for _, tc := range cases {
+		t.Run(tc.name+"/claude non-stream", func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			b, _ := json.Marshal(tc.body(false))
+			req := &Request{ModelName: "gpt-5.2", Body: b, APIKey: "test-token", TranslateResp: true}
 
-		err := ForwardCursor(rec, req)
-		if err != nil {
-			t.Fatalf("ForwardCursor failed: %v", err)
-		}
-		bodyStr := rec.Body.String()
-		if !strings.Contains(bodyStr, "event: content_block_delta") && !strings.Contains(bodyStr, "event: message_start") {
-			t.Fatalf("expected Claude SSE event format, got\n%s", bodyStr)
-		}
-	})
+			if err := ForwardCursor(rec, req); err != nil {
+				t.Fatalf("ForwardCursor failed: %v", err)
+			}
+			if got := rec.Body.String(); !strings.Contains(got, `"type":"message"`) {
+				t.Fatalf("expected Claude message format, got\n%s", got)
+			}
+		})
+
+		t.Run(tc.name+"/claude stream", func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			b, _ := json.Marshal(tc.body(true))
+			req := &Request{ModelName: "gpt-5.2", Body: b, APIKey: "test-token", IsStream: true, TranslateResp: true}
+
+			if err := ForwardCursor(rec, req); err != nil {
+				t.Fatalf("ForwardCursor failed: %v", err)
+			}
+			got := rec.Body.String()
+			if !strings.Contains(got, "event: content_block_delta") && !strings.Contains(got, "event: message_start") {
+				t.Fatalf("expected Claude SSE event format, got\n%s", got)
+			}
+		})
+	}
 }

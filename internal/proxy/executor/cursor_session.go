@@ -45,6 +45,14 @@ var (
 	cursorChatBaseURL   = "https://api2.cursor.sh"
 )
 
+// cursorAgentTLSConfig builds the TLS config for the hand-rolled AgentService
+// socket. A var for the same reason as the endpoints above: an httptest server
+// presents a self-signed certificate, so a test that points
+// cursorAgentEndpoint at one has to relax verification here.
+var cursorAgentTLSConfig = func(host string) *tls.Config {
+	return &tls.Config{ServerName: host, NextProtos: []string{"h2"}}
+}
+
 type agentSession struct {
 	rawConn    net.Conn
 	clientConn *http2.ClientConn
@@ -138,10 +146,7 @@ func openAgentHttp2Stream(ctx context.Context, endpointURL string, headers map[s
 		port = "443"
 	}
 
-	rawConn, err := dialCursorH2(ctx, client, host, port, &tls.Config{
-		ServerName: host,
-		NextProtos: []string{"h2"},
-	})
+	rawConn, err := dialCursorH2(ctx, client, host, port, cursorAgentTLSConfig(host))
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial cursor h2 endpoint: %w", err)
 	}

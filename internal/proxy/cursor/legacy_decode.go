@@ -7,7 +7,7 @@ import (
 
 // ExtractLegacyResponse parses a StreamUnifiedChatResponse frame payload with correct field IDs.
 func ExtractLegacyResponse(payload []byte) LegacyResponseFrame {
-	if res, ok := legacyJSONError(payload); ok {
+	if res, ok := ExtractJSONError(payload); ok {
 		return res
 	}
 
@@ -18,12 +18,17 @@ func ExtractLegacyResponse(payload []byte) LegacyResponseFrame {
 	return legacyTextFromFields(fields)
 }
 
-// legacyJSONError recognises a Connect end-stream trailer that carries a JSON
+// ExtractJSONError recognises a Connect end-stream trailer that carries a JSON
 // error object instead of a protobuf message, and maps it the way upstream's
 // createErrorResponse does: the debug title wins over the debug detail, which
 // wins over the plain message, and the code travels separately so the caller can
 // decide 429 vs 400.
-func legacyJSONError(payload []byte) (LegacyResponseFrame, bool) {
+//
+// It is exported because both protocol paths need it: the legacy ChatService
+// reader, and the AgentService relay, which would otherwise protobuf-decode an
+// error trailer into nothing and report a generic failure. The first-byte check
+// runs before the string conversion, so a protobuf frame pays nothing.
+func ExtractJSONError(payload []byte) (LegacyResponseFrame, bool) {
 	if len(payload) <= 10 || payload[0] != '{' || !strings.Contains(string(payload), "\"error\"") {
 		return LegacyResponseFrame{}, false
 	}

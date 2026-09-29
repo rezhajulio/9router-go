@@ -8,6 +8,7 @@
 - Dynamic model catalog discovery via `GetUsableModels` with singleflight and negative memory caching.
 - Full output translation for Claude Messages (`/v1/messages`) and Responses API (`/v1/responses`) clients.
 - Connect-RPC trailer error handling, byte-exact checksum computation matching JS 32-bit shift semantics, and fail-closed background shell bridging with `tool_choice` gating.
+- An error trailer is recognised on both protocol paths, not just the legacy one: a JSON `{"error":...}` end-stream frame is sniffed before any protobuf decode, so an AgentService quota failure is a 429 and an auth failure a 401 — enough for the fallback layer to rotate the account and refresh the token, instead of a generic 502 that did neither.
 - Tool-call turns correctly terminate with `finish_reason: "tool_calls"` and `data: [DONE]`.
 - Response commit safety: prevents retrying on already-committed writers after keepalive pings; honors client cancellation without triggering account backoff locks.
 - Legacy ChatService error frames are mapped like upstream: `resource_exhausted` → 429, any other Connect code → 400, instead of every error benching the account as a rate limit.

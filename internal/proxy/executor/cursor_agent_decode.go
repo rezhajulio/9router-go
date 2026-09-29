@@ -17,6 +17,7 @@ const (
 	agentEventThinking
 	agentEventToolCall
 	agentEventTurnEnded
+	agentEventError
 )
 
 // agentToolCall is a tool call the client has to execute.
@@ -31,13 +32,18 @@ type agentEvent struct {
 	Kind     agentEventKind
 	Text     string
 	ToolCall agentToolCall
+	// ErrMessage and ErrCode carry a Connect end-stream error trailer. ErrCode
+	// decides the HTTP status the caller reports, so a quota or auth failure
+	// rotates accounts instead of looking like a truncated answer.
+	ErrMessage string
+	ErrCode    string
 }
 
-// terminal reports whether processing of the payload must stop here. A tool call
-// and a turn end both end the relay, so a tool call from the same frame can
-// never be written after the terminal chunk.
+// terminal reports whether processing of the payload must stop here. A tool
+// call, a turn end and an error trailer all end the relay, so a tool call from
+// the same frame can never be written after the terminal chunk.
 func (k agentEventKind) terminal() bool {
-	return k == agentEventToolCall || k == agentEventTurnEnded
+	return k == agentEventToolCall || k == agentEventTurnEnded || k == agentEventError
 }
 
 func lastIsTerminal(events []agentEvent) bool {
@@ -54,6 +60,14 @@ func lastIsTerminal(events []agentEvent) bool {
 // event is produced the rest of the payload is skipped exactly as the previous
 // per-path callbacks did.
 func decodeAgentPayload(session *agentSession, clientTools []cursorpkg.ClientTool, payload []byte) []agentEvent {
+	// A Connect end-stream trailer carries a JSON error object, not a protobuf
+	// message. Decoding it as protobuf yields no fields, which is how a quota or
+	// auth failure used to end as a generic "stream closed before the turn
+	// ended" 502 with no rotation and no cooldown.
+	if res, ok := cursorpkg.ExtractJSONError(payload); ok {
+		return []agentEvent{{Kind: agentEventError, ErrMessage: res.Error, ErrCode: res.ErrorCode}}
+	}
+
 	serverMsg := cursorpkg.DecodeMessage(payload)
 
 	var events []agentEvent
